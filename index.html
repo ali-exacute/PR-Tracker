@@ -438,13 +438,14 @@ body.dark .view-chip{background:var(--panel)}
       <label class="check" style="display:inline-flex;margin-bottom:8px">
         <input id="cloudRemember" type="checkbox" onchange="saveSettings()" checked> Remember passphrase, token & Gist ID on this browser (auto-unlock next visit)
       </label>
-      <label class="check" style="display:inline-flex;margin-bottom:8px">
-        <input id="cloudAutoSync" type="checkbox" onchange="saveSettings()"> Auto-push after every change (when unlocked)
-      </label>
       <label class="check" style="display:inline-flex;margin-bottom:12px">
-        <input id="cloudLiveSync" type="checkbox" onchange="saveSettings()"> Live sync — pull when this tab is focused & every 20s (other devices’ changes show up here)
+        <input id="cloudAutoSync" type="checkbox" onchange="saveSettings()"> Auto-upload to Gist after every change (when unlocked) — no need to press Push
       </label>
-      <div class="small" style="margin-bottom:10px;color:var(--muted)">Saved credentials stay in <b>this browser only</b>. Anyone with access to this PC profile can read them. Lock + uncheck “Remember” to clear.</div>
+      <div class="small" style="margin-bottom:10px;color:var(--muted)">
+        While unlocked, every edit is uploaded to your private Gist automatically.
+        On another device: Unlock → <b>Pull now</b> (manual). No automatic cross-device sync.
+        Credentials stay in <b>this browser only</b>.
+      </div>
       <div class="actions" style="flex-wrap:wrap">
         <button type="button" class="btn primary" onclick="cloudUnlock()">Unlock</button>
         <button type="button" class="btn" onclick="cloudLock()">Lock</button>
@@ -548,9 +549,8 @@ let settings=Object.assign({
   savedViews:[],
   cloudGistId:'',
   cloudAutoSync:true,
-  cloudPullOnUnlock:true,
   cloudRemember:true,
-  cloudLiveSync:true
+  cloudLiveSync:false
 },JSON.parse(localStorage.getItem(SETTINGS_KEY)||'{}'));
 if(!Array.isArray(settings.savedViews)) settings.savedViews=[];
 let backupTimer=null;
@@ -841,12 +841,10 @@ function saveSettings(){
   const gid=val('cloudGistId'); if(gid!==undefined) settings.cloudGistId=gid;
   const cas=document.getElementById('cloudAutoSync'); if(cas) settings.cloudAutoSync=!!cas.checked;
   const clr=document.getElementById('cloudRemember'); if(clr) settings.cloudRemember=!!clr.checked;
-  const cls=document.getElementById('cloudLiveSync'); if(cls) settings.cloudLiveSync=!!cls.checked;
-  // keep pull-on-unlock aligned with live sync
-  settings.cloudPullOnUnlock = settings.cloudLiveSync!==false || settings.cloudPullOnUnlock!==false;
+  settings.cloudLiveSync=false;
   localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));
   if(settings.cloudRemember===false) clearSavedCloudCreds();
-  if(cloudSession.unlocked) startCloudLiveSync(); else stopCloudLiveSync();
+  stopCloudLiveSync();
   scheduleAutoBackup(); updateBackupInfo(); updateCloudSyncUI();
 }
 function toggleDarkMode(on){ settings.darkMode=!!on; localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings)); applyTheme(); }
@@ -1106,7 +1104,6 @@ function renderSettings(){
   set('cloudGistId', settings.cloudGistId||'');
   const cas=document.getElementById('cloudAutoSync'); if(cas) cas.checked=settings.cloudAutoSync!==false;
   const clr=document.getElementById('cloudRemember'); if(clr) clr.checked=settings.cloudRemember!==false;
-  const cls=document.getElementById('cloudLiveSync'); if(cls) cls.checked=settings.cloudLiveSync!==false;
   fillCloudCredFieldsFromStorage();
   applyTheme(); updateBackupInfo(); updateBackupFolderLabel(); updateCloudSyncUI();
 }
@@ -1936,18 +1933,9 @@ function openBulkAddDestModal(issueId){
     alert('No compatible destinations left to add for this issue version.');
     return;
   }
-  let body=groups.map(g=>{
-    if(g.orphan){
-      return `<div class="ss-group">Other</div>`+g.temps.map(t=>bulkCheckRow(t)).join('');
-    }
-    const m=g.master;
-    return `<div class="ss-group">${esc(m.name)}</div>
-      <label class="check" style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer">
-        <input type="checkbox" class="bulk-dest" value="${esc(m.id)}" onchange="bulkToggleGroup(this,'${esc(m.id)}')">
-        <span>◆ ${esc(m.name)} (master) + all its temps below</span>
-      </label>
-      ${g.temps.map(t=>bulkCheckRow(t, true)).join('')}`;
-  }).join('');
+  window._bulkAvail = available;
+  window._bulkGroups = groups;
+  let body=renderBulkDestList(groups, '').html;
   openModal(`<div class="modal-head"><h2>Bulk add destinations</h2><button class="kebab" onclick="closeModal()">×</button></div>
   <div class="modal-body">
     <div class="subtitle" style="margin-bottom:10px">${esc(i.jira||'')} · ${esc(i.description||'')} · ${esc(i.version||'')}</div>
@@ -1955,11 +1943,16 @@ function openBulkAddDestModal(issueId){
       ${ssHtml({id:'bulkStatus', name:'bulkStatus', options:statuses(), value:'TODO'})}
     </div>
     <div class="form-group">
+      <label>Search destinations</label>
+      <input dir="auto" id="bulkDestSearch" class="field" placeholder="Search branch, company, master…" oninput="filterBulkDestList()">
+    </div>
+    <div class="form-group">
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button type="button" class="btn" onclick="bulkSelectAll(true)">Select all</button>
+        <button type="button" class="btn" onclick="bulkSelectAll(true)">Select all visible</button>
         <button type="button" class="btn" onclick="bulkSelectAll(false)">Select none</button>
       </div>
-      <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px">${body}</div>
+      <div id="bulkDestList" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px">${body}</div>
+      <div id="bulkDestMeta" class="small" style="margin-top:6px"></div>
     </div>
     <div class="form-actions">
       <button type="button" class="btn" onclick="closeModal()">Cancel</button>
@@ -1967,9 +1960,50 @@ function openBulkAddDestModal(issueId){
     </div>
   </div>`);
   ssRenderList('bulkStatus');
+  filterBulkDestList();
+}
+function bulkRowSearchBlob(d){
+  return [destLabel(d), d.branch, d.name, d.company, d.kind, d.fromVersion].filter(Boolean).join(' ').toLowerCase();
+}
+function renderBulkDestList(groups, q){
+  q=(q||'').toLowerCase().trim();
+  const match=d=>!q || bulkRowSearchBlob(d).includes(q);
+  let html='', n=0;
+  groups.forEach(g=>{
+    if(g.orphan){
+      const temps=(g.temps||[]).filter(match);
+      if(!temps.length) return;
+      html+=`<div class="ss-group">Other</div>`+temps.map(t=>{ n++; return bulkCheckRow(t,false); }).join('');
+      return;
+    }
+    const m=g.master;
+    const temps=(g.temps||[]).filter(match);
+    const masterMatch=m && match(m);
+    if(!masterMatch && !temps.length) return;
+    html+=`<div class="ss-group">${esc(m.name)}</div>`;
+    if(masterMatch){
+      n++;
+      html+=`<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer">
+        <input type="checkbox" class="bulk-dest" value="${esc(m.id)}" onchange="bulkToggleGroup(this,'${esc(m.id)}')">
+        <span>◆ ${esc(m.name)} (master)</span>
+      </label>`;
+    }
+    html+=temps.map(t=>{ n++; return bulkCheckRow(t, true); }).join('');
+  });
+  if(!html) html='<div class="muted" style="padding:12px;text-align:center">No destinations match.</div>';
+  return {html, n};
+}
+function filterBulkDestList(){
+  const q=document.getElementById('bulkDestSearch')?.value||'';
+  const groups=window._bulkGroups||[];
+  const r=renderBulkDestList(groups, q);
+  const list=document.getElementById('bulkDestList');
+  if(list) list.innerHTML=r.html;
+  const meta=document.getElementById('bulkDestMeta');
+  if(meta) meta.textContent=r.n+' destination(s) shown';
 }
 function bulkCheckRow(d, indent){
-  return `<label class="check" style="display:flex;gap:8px;align-items:center;padding:4px 0 ${indent?'0 0 0 18px':'0'};cursor:pointer">
+  return `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0 ${indent?'0 0 0 18px':'0'};cursor:pointer">
     <input type="checkbox" class="bulk-dest" value="${esc(d.id)}" data-parent="${esc(d.parentId||'')}">
     <span dir="auto">${esc(destLabel(d))} <span class="muted">${d.kind==='temp'?('· '+esc(d.company||'')):'· master'}</span></span>
   </label>`;
@@ -2922,11 +2956,7 @@ async function cloudUnlock(fromAuto){
     saveSettings();
     cloudSetStatus(fromAuto?'Auto-unlocked.':'Unlocked — credentials saved on this browser.', false);
     updateCloudSyncUI();
-    startCloudLiveSync();
-    const gistId=(settings.cloudGistId||document.getElementById('cloudGistId')?.value||'').trim();
-    if(gistId && settings.cloudLiveSync!==false){
-      await cloudPull({silent:true, replaceConfirm:false, onlyIfNewer:false});
-    }
+    stopCloudLiveSync();
     return true;
   }catch(e){
     console.error(e);
@@ -3298,6 +3328,47 @@ function refreshAllPages(){
   try{ renderLists(); }catch(e){}
   try{ renderSettings(); }catch(e){}
 }
+
+function matchDestByBranch(branch){
+  if(!branch) return null;
+  const n=String(branch).trim().toLowerCase();
+  const list=data.destinations||[];
+  let d=list.find(x=>(x.branch||'').toLowerCase()===n);
+  if(d) return d;
+  d=list.find(x=>(x.name||'').toLowerCase()===n);
+  if(d) return d;
+  d=list.find(x=>destLabel(x).toLowerCase()===n);
+  if(d) return d;
+  if(n==='developer'){
+    d=list.find(x=>(x.branch||'').toLowerCase()==='developer'||(x.name||'').toLowerCase()==='developer');
+    if(d) return d;
+  }
+  if(n==='parsian'){
+    d=list.find(x=>(x.company||'').toLowerCase()==='parsian' && x.kind==='temp');
+    if(d) return d;
+    d=list.find(x=>(x.branch||'').toLowerCase().includes('parsian'));
+  }
+  // case-insensitive temp_ vs Temp_
+  d=list.find(x=>(x.branch||'').toLowerCase()===n || (x.name||'').toLowerCase()===n);
+  return d||null;
+}
+function linkPrDestinationBranches(prList){
+  let linked=0, unmatched=0;
+  (prList||[]).forEach(p=>{
+    if(p.destinationId && dest(p.destinationId)){ linked++; return; }
+    const br=p.destinationBranch || p.branch || '';
+    if(!br){ unmatched++; return; }
+    const d=matchDestByBranch(br);
+    if(d){ p.destinationId=d.id; linked++; }
+    else {
+      unmatched++;
+      const note='Unmatched dest: '+br;
+      p.notes = p.notes ? (p.notes+' | '+note) : note;
+    }
+  });
+  return {linked, unmatched};
+}
+
 function normalizeImportPayload(raw){
   if(!raw || typeof raw!=='object') throw new Error('File is not a JSON object');
   // Encrypted gist blob by mistake
@@ -3358,11 +3429,18 @@ function importSectionFile(e){
         if(!base.issues.length && !base.prs.length && !base.destinations.length){
           if(!confirm('This file has 0 issues, 0 PRs, and 0 destinations. Import anyway?')) return;
         }
+                // Keep catalogs/destinations if the import file left them empty (NeedRegister)
+        if((!base.destinations || !base.destinations.length) && (data.destinations||[]).length) base.destinations = data.destinations;
+        if((!base.versions || !base.versions.length) && (data.versions||[]).length) base.versions = data.versions;
+        if((!base.companies || !base.companies.length) && (data.companies||[]).length) base.companies = data.companies;
+        if((!base.statuses || !base.statuses.length) && (data.statuses||[]).length) base.statuses = data.statuses;
+        if((!base.tagsCatalog || !base.tagsCatalog.length) && (data.tagsCatalog||[]).length) base.tagsCatalog = data.tagsCatalog;
         data=migrateData(base);
+        const link=linkPrDestinationBranches(data.prs);
         if(norm.settings) applyExportedSettings(norm.settings);
         try{ localStorage.setItem(KEY, JSON.stringify(data)); }catch(err){ throw new Error('Saved data but localStorage failed: '+err.message); }
         refreshAllPages();
-        alert('Full import complete.\\nIssues: '+data.issues.length+'\\nPRs: '+data.prs.length+'\\nDestinations: '+data.destinations.length);
+        alert('Full import complete.\nIssues: '+data.issues.length+'\nPRs: '+data.prs.length+'\nDestinations: '+data.destinations.length+'\nLinked PR branches: '+link.linked+'\nUnmatched: '+link.unmatched);
         return;
       }
 
@@ -3376,8 +3454,13 @@ function importSectionFile(e){
       if(section==='issues'){
         if(!Array.isArray(incoming.issues)) throw new Error('No issues array in file');
         data.issues=mergeById(data.issues, incoming.issues);
+        if(Array.isArray(incoming.prs) && incoming.prs.length){
+          linkPrDestinationBranches(incoming.prs);
+          data.prs=mergeById(data.prs, incoming.prs);
+        }
       } else if(section==='prs'){
         if(!Array.isArray(incoming.prs)) throw new Error('No PRs array in file');
+        linkPrDestinationBranches(incoming.prs);
         data.prs=mergeById(data.prs, incoming.prs);
       } else if(section==='destinations'){
         if(!Array.isArray(incoming.destinations)) throw new Error('No destinations array in file');
@@ -3434,28 +3517,16 @@ try {
   });
 } catch(e) {}
 
-// Auto-unlock if credentials were remembered
+// Auto-unlock if credentials were remembered (does NOT pull — use Pull now on other devices)
 (async function cloudAutoBoot(){
   try{
     fillCloudCredFieldsFromStorage();
     const c=loadCloudCreds();
-    const hasGist=(settings.cloudGistId||'').trim();
     if(c && c.passphrase && c.token && settings.cloudRemember!==false){
       await cloudUnlock(true);
     }
   }catch(e){ console.warn('cloud auto-unlock', e); }
 })();
-
-document.addEventListener('visibilitychange', ()=>{
-  if(document.visibilityState==='visible' && cloudSession.unlocked && settings.cloudLiveSync!==false){
-    cloudPull({ silent:true, replaceConfirm:false, onlyIfNewer:true });
-  }
-});
-window.addEventListener('focus', ()=>{
-  if(cloudSession.unlocked && settings.cloudLiveSync!==false){
-    cloudPull({ silent:true, replaceConfirm:false, onlyIfNewer:true });
-  }
-});
 
 </script>
 <input id="importFile" type="file" accept=".json,application/json,text/json,*/*" class="hidden" onchange="importSectionFile(event)">
