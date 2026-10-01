@@ -661,6 +661,54 @@ function jiraHtml(i) {
   }
   return `<span class="jira">${esc(id)}</span>`;
 }
+function copyButtonHtml(value, label) {
+  if (!value) return '';
+  return `<button type="button" class="copy-btn" data-copy-text="${esc(value)}" data-copy-label="${esc(label)}"
+    title="Copy ${esc(label)}" aria-label="Copy ${esc(label)}" onclick="copyIssueField(event, this)"><span aria-hidden="true">⧉</span></button>`;
+}
+async function copyIssueField(e, button) {
+  e.preventDefault();
+  e.stopPropagation();
+  const value = button.dataset.copyText || '';
+  if (!value) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (err) {
+        copyTextFallback(value);
+      }
+    } else {
+      copyTextFallback(value);
+    }
+    button.classList.add('copied');
+    button.title = 'Copied';
+    button.setAttribute('aria-label', `Copied ${button.dataset.copyLabel || 'text'}`);
+    button.querySelector('span').textContent = '✓';
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.remove('copied');
+      button.title = `Copy ${button.dataset.copyLabel || 'text'}`;
+      button.setAttribute('aria-label', button.title);
+      button.querySelector('span').textContent = '⧉';
+    }, 1400);
+  } catch (err) {
+    button.title = 'Copy failed';
+    button.setAttribute('aria-label', 'Copy failed');
+  }
+}
+function copyTextFallback(value) {
+  const input = document.createElement('textarea');
+  input.value = value;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  input.select();
+  const copied = document.execCommand('copy');
+  input.remove();
+  if (!copied) throw new Error('Clipboard unavailable');
+}
 function jiraBase() {
   return String(settings.jiraBaseUrl || '').trim().replace(/\/+$/, '');
 }
@@ -1915,8 +1963,8 @@ function renderIssues() {
           ondragend="onIssueDragEnd(event)"
           onclick="event.stopPropagation()">⠿</span>
         <div style="min-width:0">
-          <div>${jiraHtml(i)}</div>
-          <div dir="auto" class="card-title">${esc(i.description || 'Untitled')}</div>
+          <div class="copy-field copy-field--jira">${jiraHtml(i)}${copyButtonHtml(i.jira, 'Jira ID')}</div>
+          <div dir="auto" class="card-title copy-field copy-field--description"><span class="copy-value">${esc(i.description || 'Untitled')}</span>${copyButtonHtml(i.description, 'issue description')}</div>
           <div class="meta">
             <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueVersion(this)" title="Click to change version">${coloredChip(i.version, itemColor(versionObj(i.version)))}</span>
             <span class="inline-hit chip priority-${(i.priority || 'normal').toLowerCase()}" data-issue="${esc(i.id)}" onclick="onInlineIssuePriority(this)" title="Click to change priority">${esc(i.priority)}</span>

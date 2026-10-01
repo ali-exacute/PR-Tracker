@@ -438,6 +438,52 @@ summary:focus-visible {
 	font-weight: 720;
 	font-size: 16px;
 }
+.copy-field {
+	min-width: 0;
+}
+.copy-field--jira {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.copy-field--description {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+.copy-value {
+	min-width: 0;
+	flex: 1;
+	overflow-wrap: anywhere;
+}
+.copy-btn {
+	display: inline-grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	flex: 0 0 24px;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 1;
+	opacity: 0;
+	transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+.copy-field:hover .copy-btn,
+.copy-field:focus-within .copy-btn {
+	opacity: 1;
+}
+.copy-btn:hover {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.copy-btn.copied {
+	color: var(--success);
+	opacity: 1;
+}
 .jira {
 	color: var(--accent);
 	font-size: 12px;
@@ -1391,6 +1437,9 @@ textarea.field {
 	}
 	.topbar .actions {
 		width: 100%;
+	}
+	.copy-btn {
+		opacity: 0.72;
 	}
 	.stats {
 		gap: 8px;
