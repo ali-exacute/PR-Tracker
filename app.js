@@ -35,7 +35,7 @@ let settings = Object.assign({
   cloudAutoSync: true,
   cloudRemember: true,
   cloudLiveSync: false
-}, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
+}, readStoredJSON(SETTINGS_KEY, {}));
 if (!Array.isArray(settings.savedViews)) settings.savedViews = [];
 let backupTimer = null;
 
@@ -46,6 +46,18 @@ const DEFAULT_VERSIONS = ['V11+', 'V12+', 'V14+', 'V15+'];
 const DEFAULT_TAGS = ['Important', 'Backend', 'Testing'];
 const DEFAULT_STATUSES = ['TODO', 'PR Only', "PR'd", 'Rejected', 'Not Required'];
 const BACKUP_FILENAME = 'pr-tracker-data.json';
+
+function readStoredJSON(key, fallback = null) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch (e) {
+    console.warn(`Could not read ${key} from storage`, e);
+    return fallback;
+  }
+}
 
 function uniqSorted(arr) {
   return [...new Set((arr || []).map(s => String(s || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -256,7 +268,7 @@ function migrateData(raw) {
   return raw;
 }
 
-let data = JSON.parse(localStorage.getItem(KEY) || 'null');
+let data = readStoredJSON(KEY, null);
 if (!data) {
   data = {
     versions: DEFAULT_VERSIONS.map(n => ({ name: n, color: '' })),
@@ -335,6 +347,26 @@ function toggleDarkMode(on) { settings.darkMode = !!on; localStorage.setItem(SET
 function applyTheme() { document.body.classList.toggle('dark', !!settings.darkMode); const x = document.getElementById('darkMode'); if (x) x.checked = !!settings.darkMode; }
 let backupDirHandle = null;
 let backupFileHandle = null;
+let backupToastTimer = null;
+
+function showBackupToast(message) {
+  const toast = document.getElementById('backupToast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.setAttribute('aria-hidden', 'false');
+  toast.classList.add('show');
+  clearTimeout(backupToastTimer);
+  backupToastTimer = setTimeout(() => {
+    toast.classList.remove('show');
+    toast.setAttribute('aria-hidden', 'true');
+  }, 4500);
+}
+
+function recordBackup(auto, message = 'Backup saved successfully.') {
+  localStorage.setItem('pr-tracker-last-backup', String(Date.now()));
+  updateBackupInfo();
+  if (!auto) showBackupToast(message);
+}
 
 function canUseFileSystemAccess() {
   return !!(window.isSecureContext && (window.showDirectoryPicker || window.showSaveFilePicker));
@@ -516,8 +548,7 @@ async function backupNow(auto) {
     try {
       const fileHandle = await backupDirHandle.getFileHandle(BACKUP_FILENAME, { create: true });
       await writeViaHandle(fileHandle, jsonText);
-      localStorage.setItem('pr-tracker-last-backup', String(Date.now()));
-      updateBackupInfo();
+      recordBackup(auto);
       return;
     } catch (e) { console.warn(e); }
   }
@@ -526,8 +557,7 @@ async function backupNow(auto) {
   if (backupFileHandle && await ensureHandlePermission(backupFileHandle)) {
     try {
       await writeViaHandle(backupFileHandle, jsonText);
-      localStorage.setItem('pr-tracker-last-backup', String(Date.now()));
-      updateBackupInfo();
+      recordBackup(auto);
       return;
     } catch (e) { console.warn(e); }
   }
@@ -542,9 +572,8 @@ async function backupNow(auto) {
       backupFileHandle = fh;
       await idbSet('backupFile', fh);
       await writeViaHandle(fh, jsonText);
-      localStorage.setItem('pr-tracker-last-backup', String(Date.now()));
       updateBackupFolderLabel();
-      updateBackupInfo();
+      recordBackup(auto);
       return;
     } catch (e) {
       if (e && e.name === 'AbortError') return;
@@ -559,8 +588,7 @@ async function backupNow(auto) {
     return;
   }
   writeViaDownload(jsonText);
-  localStorage.setItem('pr-tracker-last-backup', String(Date.now()));
-  updateBackupInfo();
+  recordBackup(auto, 'Backup download started. Check your browser downloads.');
   if (!auto && (isFileProtocol() || !canUseFileSystemAccess())) {
     // one-line hint; full explanation is in Settings
   }
@@ -1011,10 +1039,18 @@ function renderStats() {
     <div class="stat"><div class="n">${counts['PR Only'] || 0}</div><div class="l">PR Only</div></div>
     <div class="stat"><div class="n">${counts["PR'd"] || 0}</div><div class="l">PR'd</div></div>`;
 }
-function getExpanded(id) { const state = JSON.parse(localStorage.getItem('pr-tracker-expanded-v1') || '{}'); return state[id] !== false; }
-function toggleIssue(id) { const state = JSON.parse(localStorage.getItem('pr-tracker-expanded-v1') || '{}'); state[id] = !getExpanded(id); localStorage.setItem('pr-tracker-expanded-v1', JSON.stringify(state)); renderIssues(); }
+function getExpanded(id) {
+  const state = readStoredJSON('pr-tracker-expanded-v1', {});
+  return state[id] === true;
+}
+function toggleIssue(id) {
+  const state = readStoredJSON('pr-tracker-expanded-v1', {});
+  state[id] = !getExpanded(id);
+  localStorage.setItem('pr-tracker-expanded-v1', JSON.stringify(state));
+  renderIssues();
+}
 function toggleAllIssues() {
-  const state = JSON.parse(localStorage.getItem('pr-tracker-expanded-v1') || '{}');
+  const state = readStoredJSON('pr-tracker-expanded-v1', {});
   const any = data.issues.some(i => getExpanded(i.id));
   data.issues.forEach(i => state[i.id] = !any);
   localStorage.setItem('pr-tracker-expanded-v1', JSON.stringify(state));
@@ -1026,8 +1062,16 @@ function updateCollapseAllButton() {
 }
 
 /* Master expand state */
-function getMasterExpanded(id) { const state = JSON.parse(localStorage.getItem('pr-tracker-master-exp-v1') || '{}'); return state[id] !== false; }
-function toggleMaster(id) { const state = JSON.parse(localStorage.getItem('pr-tracker-master-exp-v1') || '{}'); state[id] = !getMasterExpanded(id); localStorage.setItem('pr-tracker-master-exp-v1', JSON.stringify(state)); renderDestinations(); }
+function getMasterExpanded(id) {
+  const state = readStoredJSON('pr-tracker-master-exp-v1', {});
+  return state[id] !== false;
+}
+function toggleMaster(id) {
+  const state = readStoredJSON('pr-tracker-master-exp-v1', {});
+  state[id] = !getMasterExpanded(id);
+  localStorage.setItem('pr-tracker-master-exp-v1', JSON.stringify(state));
+  renderDestinations();
+}
 
 /* ── Versions ── */
 function renderVersions() { renderVersionList(); }
@@ -1526,7 +1570,8 @@ function getIssueFilterState() {
     important: document.getElementById('issueImportant')?.value || '',
     prStatus: document.getElementById('issuePrStatus')?.value || '',
     company: document.getElementById('issueCompany')?.value || '',
-    reportedVer: document.getElementById('issueReportedVer')?.value || ''
+    reportedVer: document.getElementById('issueReportedVer')?.value || '',
+    attention: document.getElementById('issueAttention')?.value === '1'
   };
 }
 function applyIssueFilterState(f) {
@@ -1539,14 +1584,71 @@ function applyIssueFilterState(f) {
   setHidden('issuePrStatus', f.prStatus);
   setHidden('issueCompany', f.company);
   setHidden('issueReportedVer', f.reportedVer);
+  setHidden('issueAttention', f.attention ? '1' : '');
   renderIssues();
+}
+function clearIssueFilters() {
+  document.getElementById('issueSearch').value = '';
+  ['issueVersion', 'issuePriority', 'issueImportant', 'issuePrStatus', 'issueCompany', 'issueReportedVer', 'issueAttention']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.querySelector('.filter-drawer')?.removeAttribute('open');
+  renderIssues();
+}
+function removeIssueFilter(key) {
+  const field = key === 'search' ? 'issueSearch' : ({ attention: 'issueAttention' }[key] || `issue${key[0].toUpperCase()}${key.slice(1)}`);
+  const el = document.getElementById(field);
+  if (el) el.value = '';
+  renderIssues();
+}
+function toggleAttentionView() {
+  const el = document.getElementById('issueAttention');
+  el.value = el.value === '1' ? '' : '1';
+  renderIssues();
+}
+function issueNeedsAttention(issueObj) {
+  const issuePrs = data.prs.filter(p => p.issueId === issueObj.id);
+  if (!issuePrs.length) return true;
+  const terminalStatuses = new Set(["pr'd", 'rejected', 'not required']);
+  const openPrs = issuePrs.filter(p => !terminalStatuses.has(String(p.status || '').toLowerCase()));
+  if (!openPrs.length) return false;
+  if (['critical', 'high'].includes(String(issueObj.priority || '').toLowerCase())) return true;
+  const staleAfterMs = 14 * 24 * 60 * 60 * 1000;
+  return openPrs.some(p => {
+    const updatedAt = Date.parse(p.updatedAt || p.createdAt || '');
+    return Number.isFinite(updatedAt) && Date.now() - updatedAt >= staleAfterMs;
+  });
+}
+function renderActiveIssueFilters() {
+  const row = document.getElementById('issueActiveFilters');
+  if (!row) return;
+  const state = getIssueFilterState();
+  const entries = [
+    ['search', 'Search', state.search],
+    ['version', 'Version', state.version],
+    ['priority', 'Priority', state.priority],
+    ['important', 'Importance', state.important ? 'Important' : ''],
+    ['prStatus', 'PR status', state.prStatus],
+    ['company', 'Company', state.company],
+    ['reportedVer', 'Reported version', state.reportedVer],
+    ['attention', 'View', state.attention ? 'Needs attention' : '']
+  ].filter(([, , value]) => value);
+  row.innerHTML = entries.map(([key, label, value]) =>
+    `<button type="button" class="filter-chip" onclick="removeIssueFilter('${key}')"><span>${esc(label)}: ${esc(value)}</span><span aria-hidden="true">×</span></button>`
+  ).join('');
+  row.classList.toggle('hidden', !entries.length);
+  const count = document.getElementById('issueFilterCount');
+  if (count) count.textContent = String(entries.filter(([key]) => key !== 'search' && key !== 'attention').length);
+  const clear = document.getElementById('clearIssueFiltersBtn');
+  if (clear) clear.disabled = !entries.length;
 }
 function renderIssueViews() {
   const row = document.getElementById('issueViewsRow');
   if (!row) return;
   const views = settings.savedViews || [];
   const cur = JSON.stringify(getIssueFilterState());
-  row.innerHTML = views.map(v => {
+  const attentionOn = document.getElementById('issueAttention')?.value === '1';
+  const attentionCount = data.issues.filter(issueNeedsAttention).length;
+  row.innerHTML = `<button type="button" class="view-chip attention-view ${attentionOn ? 'on' : ''}" onclick="toggleAttentionView()" aria-pressed="${attentionOn}">Needs attention <span class="view-count">${attentionCount}</span></button>` + views.map(v => {
     const on = JSON.stringify(v.filters || {}) === cur;
     return `<span class="view-chip ${on ? 'on' : ''}" data-vid="${esc(v.id)}" onclick="applySavedView('${esc(v.id)}')">
       ${esc(v.name)}
@@ -1692,6 +1794,7 @@ function renderIssues() {
   const imp = document.getElementById('issueImportant').value;
   const co = document.getElementById('issueCompany')?.value || '';
   const rv = document.getElementById('issueReportedVer')?.value || '';
+  const attention = document.getElementById('issueAttention')?.value === '1';
   const arr = data.issues.filter(i => {
     const prs = data.prs.filter(p => p.issueId === i.id);
     return (!q || [i.jira, i.description, i.notes, i.reportedBy || '', i.reportedVersion || ''].join(' ').toLowerCase().includes(q))
@@ -1699,11 +1802,15 @@ function renderIssues() {
       && (!ps || prs.some(p => p.status === ps))
       && (!imp || (i.tags || []).map(t => t.toLowerCase()).includes('important'))
       && (!co || i.reportedBy === co)
-      && (!rv || i.reportedVersion === rv);
+      && (!rv || i.reportedVersion === rv)
+      && (!attention || issueNeedsAttention(i));
   });
   const el = document.getElementById('issueCards');
   const sorted = sortedIssues(arr);
-  if (!sorted.length) { el.innerHTML = '<div class="empty">No issues match.</div>'; updateCollapseAllButton(); return; }
+  if (!sorted.length) {
+    el.innerHTML = '<div class="empty">No issues match.</div>';
+    updateCollapseAllButton(); renderIssueViews(); renderActiveIssueFilters(); return;
+  }
   el.innerHTML = sorted.map(i => {
     const issuePrList = data.prs.filter(p => p.issueId === i.id);
     const prs = issuePrList.map(p => {
@@ -1738,19 +1845,23 @@ function renderIssues() {
           <div class="meta">
             <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueVersion(this)" title="Click to change version">${coloredChip(i.version, itemColor(versionObj(i.version)))}</span>
             <span class="inline-hit chip priority-${(i.priority || 'normal').toLowerCase()}" data-issue="${esc(i.id)}" onclick="onInlineIssuePriority(this)" title="Click to change priority">${esc(i.priority)}</span>
-            <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueCompany(this)" title="Click to change company">${i.reportedBy ? coloredChip('🏢 ' + i.reportedBy, (companyObj(i.reportedBy) || {}).color || '') : coloredChip('🏢 —', '')}</span>
-            <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueReportedVer(this)" title="Click to change reported version">${i.reportedVersion ? coloredChip('reported ' + i.reportedVersion, itemColor(versionObj(i.reportedVersion))) : coloredChip('reported —', '')}</span>
-            ${(i.tags || []).map(t => coloredChip('#' + t, itemColor(tagObj(t)))).join('')}
           </div>
           ${progressHtml(i.id)}
-          <div class="time-meta">Created ${formatTime(i.createdAt)} · Updated ${formatTime(i.updatedAt)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <button class="btn edit icon" data-id="${esc(i.id)}" onclick="onOpenIssue(this)">Edit</button>
-          <span class="chip" style="font-size:16px;padding:2px 8px">${expanded ? '▾' : '▸'}</span>
+          <button type="button" class="btn issue-expand" aria-expanded="${expanded}" aria-label="${expanded ? 'Collapse' : 'Expand'} ${esc(i.jira || i.description || 'issue')} details" onclick="event.stopPropagation();toggleIssue('${esc(i.id)}')"><span aria-hidden="true">${expanded ? '▾' : '▸'}</span><span>${issuePrList.length} PR${issuePrList.length === 1 ? '' : 's'}</span></button>
         </div>
       </div>
       <div class="issue-body ${expanded ? '' : 'hidden'}">
+        <div class="issue-secondary-meta">
+          <div class="meta">
+            <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueCompany(this)" title="Click to change company">${i.reportedBy ? coloredChip('Company · ' + i.reportedBy, (companyObj(i.reportedBy) || {}).color || '') : coloredChip('Company · —', '')}</span>
+            <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueReportedVer(this)" title="Click to change reported version">${i.reportedVersion ? coloredChip('Reported · ' + i.reportedVersion, itemColor(versionObj(i.reportedVersion))) : coloredChip('Reported · —', '')}</span>
+            ${(i.tags || []).map(t => coloredChip('#' + t, itemColor(tagObj(t)))).join('')}
+          </div>
+          <div class="time-meta">Created ${formatTime(i.createdAt)} · Updated ${formatTime(i.updatedAt)}</div>
+        </div>
         <div class="card-desc">${i.notes ? `<div dir="auto" class="notes">${esc(i.notes)}</div>` : ''}</div>
         <div class="prs" data-issue-prs="${esc(i.id)}">
           <div class="prs-head">
@@ -1774,6 +1885,7 @@ function renderIssues() {
   }).join('');
   updateCollapseAllButton();
   renderIssueViews();
+  renderActiveIssueFilters();
 }
 
 function openIssueModal(id) {

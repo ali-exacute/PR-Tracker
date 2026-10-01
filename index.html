@@ -13,12 +13,12 @@
     <aside class="sidebar">
       <div class="logo">PR <span>Tracker</span></div>
       <div class="nav">
-        <button data-page="issues" class="active">▣ &nbsp; Issues</button>
-        <button data-page="prs">↗ &nbsp; PRs</button>
-        <button data-page="destinations">◈ &nbsp; Destinations</button>
-        <button data-page="versions">▤ &nbsp; Versions</button>
-        <button data-page="lists">☰ &nbsp; Lists</button>
-        <button data-page="settings">⚙ &nbsp; Settings</button>
+        <button data-page="issues" data-label="Issues" aria-label="Issues" title="Issues" class="active"><span class="nav-icon" aria-hidden="true">▣</span><span class="nav-label">Issues</span></button>
+        <button data-page="prs" data-label="PRs" aria-label="PRs" title="PRs"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-label">PRs</span></button>
+        <button data-page="destinations" data-label="Destinations" aria-label="Destinations" title="Destinations"><span class="nav-icon" aria-hidden="true">◈</span><span class="nav-label">Destinations</span></button>
+        <button data-page="versions" data-label="Versions" aria-label="Versions" title="Versions"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-label">Versions</span></button>
+        <button data-page="lists" data-label="Lists" aria-label="Lists" title="Lists"><span class="nav-icon" aria-hidden="true">☰</span><span class="nav-label">Lists</span></button>
+        <button data-page="settings" data-label="Settings" aria-label="Settings" title="Settings"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span></button>
       </div>
       <div class="sidebar-bottom small">Local app · data stays in this browser</div>
     </aside>
@@ -43,19 +43,27 @@
         <div class="toolbar">
           <input dir="auto" id="issueSearch" class="field search" placeholder="Search Jira, description, notes..."
             oninput="renderIssues()">
-          <div id="issueVersionFilter" style="width:140px"></div>
-          <div id="issuePriorityFilter" style="width:130px"></div>
-          <div id="issueImportantFilter" style="width:150px"></div>
-          <div id="issuePrStatusFilter" style="width:140px"></div>
-          <div id="issueCompanyFilter" style="width:150px"></div>
-          <div id="issueReportedVerFilter" style="width:155px"></div>
+          <details class="filter-drawer">
+            <summary class="btn" aria-controls="issueFilterGrid">Filters <span id="issueFilterCount" class="filter-count">0</span></summary>
+            <div id="issueFilterGrid" class="filter-grid">
+              <div id="issueVersionFilter"></div>
+              <div id="issuePriorityFilter"></div>
+              <div id="issueImportantFilter"></div>
+              <div id="issuePrStatusFilter"></div>
+              <div id="issueCompanyFilter"></div>
+              <div id="issueReportedVerFilter"></div>
+            </div>
+          </details>
+          <button id="clearIssueFiltersBtn" class="btn" type="button" onclick="clearIssueFilters()" disabled>Clear filters</button>
           <input type="hidden" id="issueVersion" value="">
           <input type="hidden" id="issuePriority" value="">
           <input type="hidden" id="issueImportant" value="">
           <input type="hidden" id="issuePrStatus" value="">
           <input type="hidden" id="issueCompany" value="">
           <input type="hidden" id="issueReportedVer" value="">
+          <input type="hidden" id="issueAttention" value="">
         </div>
+        <div id="issueActiveFilters" class="active-filters" aria-live="polite"></div>
         <div class="views-row" id="issueViewsRow"></div>
         <div id="issueCards" class="cards"></div>
       </section>
@@ -190,18 +198,16 @@
             <div class="subtitle">Backup and appearance.</div>
           </div>
         </div>
-        <div class="card" style="padding:20px;margin-bottom:14px">
-          <h2 style="font-size:17px;margin:0 0 6px">Local JSON backup</h2>
-          <div class="subtitle" style="margin-bottom:12px">
+        <div class="card section-card">
+          <h2 class="section-title">Local JSON backup</h2>
+          <div class="subtitle section-copy">
             Always saves as <code>pr-tracker-data.json</code> (same name, overwritten). Live data also stays in this
             browser (localStorage).
           </div>
-          <div id="backupModeNote" class="small"
-            style="margin-bottom:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fafbfc">
-          </div>
+          <div id="backupModeNote" class="small info-box"></div>
           <div class="form-group" id="backupFolderRow">
             <button class="btn primary" type="button" onclick="linkBackupFolder()">Choose backup folder…</button>
-            <div id="backupFolderLabel" class="small" style="margin-top:8px">No folder linked yet.</div>
+            <div id="backupFolderLabel" class="small note-inline">No folder linked yet.</div>
           </div>
           <div class="grid2">
             <div class="form-group">
@@ -222,10 +228,10 @@
           <div class="actions">
             <button class="btn" onclick="backupNow()">Backup now</button>
           </div>
-          <div id="backupInfo" class="small" style="margin-top:12px"></div>
+          <div id="backupInfo" class="small info-note"></div>
         </div>
-        <div class="card" style="padding:20px;margin-bottom:14px">
-          <h2 style="font-size:17px;margin:0 0 6px">Import / export all</h2>
+        <div class="card section-card">
+          <h2 class="section-title">Import / export all</h2>
           <div class="subtitle" style="margin-bottom:12px">
             Full backup of everything (issues, PRs, destinations, versions, lists, and link settings).
             Each page also has its own Export / Import for that section only.
@@ -239,15 +245,14 @@
             (merge by id/name). Import all replaces the whole dataset after confirmation.
           </div>
         </div>
-        <div class="card" style="padding:20px;margin-bottom:14px">
-          <h2 style="font-size:17px;margin:0 0 6px">Cloud sync (GitHub Gist)</h2>
+        <div class="card section-card">
+          <h2 class="section-title">Cloud sync (GitHub Gist)</h2>
           <div class="subtitle" style="margin-bottom:12px">
             Multi-device sync <b>without a custom server</b>. Your data is encrypted in the browser with your
             passphrase,
             then stored in a <b>private GitHub Gist</b>. GitHub Pages only hosts the app UI — never plain data.
           </div>
-          <div class="small"
-            style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;line-height:1.45">
+          <div class="small info-box info-box--spaced">
             <b>Security model</b><br>
             1) <b>Passphrase</b> — only you know it; used to encrypt/decrypt (AES-GCM + PBKDF2). Never sent to GitHub in
             plain form.<br>
@@ -256,8 +261,7 @@
             3) <b>Gist ID</b> — points at your private encrypted file. Safe to copy to your other devices.<br>
             Recovery: passphrase + token + Gist ID (or Export all JSON as offline backup).
           </div>
-          <div id="cloudSyncStatus" class="small"
-            style="margin-bottom:12px;padding:8px 10px;border-radius:8px;border:1px solid var(--border)">Locked — unlock
+          <div id="cloudSyncStatus" class="small status-box">Locked — unlock
             to sync.</div>
           <div class="grid2">
             <div class="form-group">
@@ -284,12 +288,12 @@
             <input id="cloudAutoSync" type="checkbox" onchange="saveSettings()"> Auto-upload to Gist after every change
             (when unlocked) — no need to press Push
           </label>
-          <div class="small" style="margin-bottom:10px;color:var(--muted)">
+          <div class="small soft-copy">
             While unlocked, every edit is uploaded to your private Gist automatically.
             On another device: Unlock → <b>Pull now</b> (manual). No automatic cross-device sync.
             Credentials stay in <b>this browser only</b>.
           </div>
-          <div class="actions" style="flex-wrap:wrap">
+          <div class="actions actions-wrap">
             <button type="button" class="btn primary" onclick="cloudUnlock()">Unlock</button>
             <button type="button" class="btn" onclick="cloudLock()">Lock</button>
             <button type="button" class="btn success" onclick="cloudPush(true)">Push now</button>
@@ -301,8 +305,8 @@
             Token: Developer settings → PAT with <b>only</b> <code>gist</code> scope.
           </div>
         </div>
-        <div class="card" style="padding:20px;margin-bottom:14px">
-          <h2 style="font-size:17px;margin:0 0 6px">Jira links</h2>
+        <div class="card section-card">
+          <h2 class="section-title">Jira links</h2>
           <div class="subtitle" style="margin-bottom:12px">Optional: build browse links from a Jira key (no API /
             login).</div>
           <div class="form-group">
@@ -313,18 +317,18 @@
               <code>CAR-123</code> becomes <code>…/browse/CAR-123</code>.</div>
           </div>
         </div>
-        <div class="card" style="padding:20px;margin-bottom:14px">
-          <h2 style="font-size:17px;margin:0 0 6px">Branch name maintenance</h2>
+        <div class="card section-card">
+          <h2 class="section-title">Branch name maintenance</h2>
           <div class="subtitle" style="margin-bottom:12px">
             Temp branches should follow <code>Temp_&lt;ver&gt;_&lt;Company&gt;</code> (capital T). Masters are left
             unchanged.
           </div>
           <button type="button" class="btn primary" onclick="reevaluateTempBranchNames()">Re-evaluate all temp branch
             names</button>
-          <div id="reevalStatus" class="small" style="margin-top:8px;color:var(--muted)"></div>
+          <div id="reevalStatus" class="small soft-copy status-inline"></div>
         </div>
-        <div class="card" style="padding:20px;margin-bottom:14px">
-          <h2 style="font-size:17px;margin:0 0 6px">Azure DevOps / TFS repo</h2>
+        <div class="card section-card">
+          <h2 class="section-title">Azure DevOps / TFS repo</h2>
           <div class="subtitle" style="margin-bottom:12px">
             Branch names become clickable when a repo URL is set. Path templates use placeholders:
             <code>{branch}</code>, <code>{ver}</code> (digits from branch/version), <code>{company}</code>,
@@ -360,8 +364,8 @@
           <div class="small" style="margin-top:8px">Optional per-destination override: set “Azure path override” when
             editing a master/temp.</div>
         </div>
-        <div class="card" style="padding:20px">
-          <h2 style="font-size:17px;margin:0 0 6px">Appearance</h2>
+        <div class="card section-card section-card--compact">
+          <h2 class="section-title">Appearance</h2>
           <label class="check" style="display:inline-flex">
             <input id="darkMode" type="checkbox" onchange="toggleDarkMode(this.checked)"> Dark mode
           </label>
@@ -373,6 +377,8 @@
   <div id="modalOverlay" class="overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal" id="modal"></div>
   </div>
+
+  <div id="backupToast" class="backup-toast" role="status" aria-live="polite" aria-hidden="true"></div>
 
   <script src="app.js"></script>
   <input id="importFile" type="file" accept=".json,application/json,text/json,*/*" class="hidden"
