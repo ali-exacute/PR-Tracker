@@ -3143,8 +3143,19 @@ function exportData(){ exportSection('all'); }
 let _importSection='all';
 function triggerImport(section){
   _importSection=section||'all';
-  const el=document.getElementById('importFile');
-  if(el){ el.value=''; el.click(); }
+  let el=document.getElementById('importFile');
+  if(!el){
+    el=document.createElement('input');
+    el.type='file';
+    el.id='importFile';
+    el.accept='.json,application/json,text/json';
+    el.className='hidden';
+    el.style.display='none';
+    el.addEventListener('change', importSectionFile);
+    document.body.appendChild(el);
+  }
+  el.value='';
+  el.click();
 }
 function mergeById(existing, incoming, idKey='id'){
   const map=new Map((existing||[]).map(x=>[x[idKey], x]));
@@ -3186,84 +3197,121 @@ function refreshAllPages(){
   try{ renderLists(); }catch(e){}
   try{ renderSettings(); }catch(e){}
 }
+function normalizeImportPayload(raw){
+  if(!raw || typeof raw!=='object') throw new Error('File is not a JSON object');
+  // Encrypted gist blob by mistake
+  if(raw.ciphertext && raw.salt){
+    throw new Error('This looks like an encrypted Gist file. Use Cloud sync → Unlock → Pull, or Export all for a plain JSON backup.');
+  }
+  // Full export: { section, data, settings }
+  if(raw.data && typeof raw.data==='object'){
+    return { section: raw.section||'all', data: raw.data, settings: raw.settings||null, raw };
+  }
+  // Bare dataset: { issues, destinations, prs, ... }
+  if(Array.isArray(raw.issues) || Array.isArray(raw.destinations) || Array.isArray(raw.prs)){
+    return { section: 'all', data: raw, settings: raw.settings||null, raw };
+  }
+  // Settings-only
+  if(raw.section==='settings' || (raw.settings && !raw.data && !raw.issues)){
+    return { section: 'settings', data: {}, settings: raw.settings||raw, raw };
+  }
+  // Section slice without wrapper
+  if(Array.isArray(raw.versions) && !raw.issues){
+    return { section: 'versions', data: { versions: raw.versions }, settings: null, raw };
+  }
+  if(Array.isArray(raw.companies) || Array.isArray(raw.statuses) || Array.isArray(raw.tagsCatalog)){
+    return { section: 'lists', data: raw, settings: null, raw };
+  }
+  throw new Error('Unrecognized backup format (need issues/destinations/prs or a PR Tracker export).');
+}
+
 function importSectionFile(e){
-  const file=e.target.files[0]; if(!file)return;
+  const file=(e && e.target && e.target.files && e.target.files[0]) || null;
+  if(!file){ alert('No file selected.'); return; }
   const expected=_importSection||'all';
   const r=new FileReader();
+  r.onerror=()=>alert('Could not read file.');
   r.onload=()=>{
     try{
-      const raw=JSON.parse(r.result);
-      const section = raw.section || (raw.data && raw.data.issues && raw.data.destinations && raw.data.prs ? 'all' : expected);
-      const incoming = raw.data || raw;
+      let textContent=r.result;
+      if(typeof textContent!=='string') textContent=String(textContent||'');
+      textContent=textContent.replace(/^\uFEFF/, ''); // strip BOM
+      const raw=JSON.parse(textContent);
+      const norm=normalizeImportPayload(raw);
+      let section=norm.section||expected;
+      const incoming=norm.data||{};
 
-      if(section==='all' || expected==='all'){
-        if(expected==='all' || section==='all'){
-          if(!confirm('Import ALL data? This replaces your current issues, PRs, destinations, versions, and lists.')) return;
-          let x = incoming;
-          if(!x.issues && raw.data) x = raw.data;
-          if(!x.issues) x = {issues:x.issues||[], destinations:x.destinations||[], prs:x.prs||[], versions:x.versions||data.versions, companies:x.companies||data.companies, statuses:x.statuses||data.statuses, tagsCatalog:x.tagsCatalog||data.tagsCatalog};
-          // full replace with migration
-          const base = {
-            issues: x.issues||[],
-            destinations: x.destinations||[],
-            prs: x.prs||[],
-            versions: x.versions||data.versions,
-            companies: x.companies||data.companies,
-            statuses: x.statuses||data.statuses,
-            tagsCatalog: x.tagsCatalog||data.tagsCatalog
-          };
-          data = migrateData(base);
-          if(raw.settings) applyExportedSettings(raw.settings);
-          save();
-          refreshAllPages();
-          alert('Full import complete.');
-          return;
+      // Full replace path
+      if(expected==='all' || section==='all'){
+        if(!confirm('Import ALL data? This replaces your current issues, PRs, destinations, versions, and lists on this browser.')) return;
+        const x=incoming;
+        const base={
+          issues: Array.isArray(x.issues)?x.issues:[],
+          destinations: Array.isArray(x.destinations)?x.destinations:[],
+          prs: Array.isArray(x.prs)?x.prs:[],
+          versions: Array.isArray(x.versions)&&x.versions.length?x.versions:(data.versions||[]),
+          companies: Array.isArray(x.companies)?x.companies:(data.companies||[]),
+          statuses: Array.isArray(x.statuses)?x.statuses:(data.statuses||[]),
+          tagsCatalog: Array.isArray(x.tagsCatalog)?x.tagsCatalog:(data.tagsCatalog||[])
+        };
+        if(!base.issues.length && !base.prs.length && !base.destinations.length){
+          if(!confirm('This file has 0 issues, 0 PRs, and 0 destinations. Import anyway?')) return;
         }
+        data=migrateData(base);
+        if(norm.settings) applyExportedSettings(norm.settings);
+        try{ localStorage.setItem(KEY, JSON.stringify(data)); }catch(err){ throw new Error('Saved data but localStorage failed: '+err.message); }
+        refreshAllPages();
+        alert('Full import complete.\\nIssues: '+data.issues.length+'\\nPRs: '+data.prs.length+'\\nDestinations: '+data.destinations.length);
+        return;
       }
 
-      // Section import (merge)
       if(section!==expected && section!=='all'){
-        if(!confirm('This file is tagged as "'+section+'" but you chose to import "'+expected+'". Continue using the file’s section?')) return;
+        if(!confirm('This file is tagged as "'+section+'" but you chose "'+expected+'". Import using the file’s section?')) return;
+        // keep file section
+      } else {
+        section = expected;
       }
-      const use = section==='all' ? expected : section;
 
-      if(use==='issues'){
-        if(!incoming.issues) throw new Error('No issues in file');
-        data.issues = mergeById(data.issues, incoming.issues);
-      } else if(use==='prs'){
-        if(!incoming.prs) throw new Error('No PRs in file');
-        data.prs = mergeById(data.prs, incoming.prs);
-      } else if(use==='destinations'){
-        if(!incoming.destinations) throw new Error('No destinations in file');
-        data.destinations = mergeById(data.destinations, incoming.destinations);
-      } else if(use==='versions'){
-        if(!incoming.versions) throw new Error('No versions in file');
-        data.versions = mergeNamedList(data.versions, incoming.versions);
-      } else if(use==='lists'){
-        if(incoming.companies) data.companies = mergeCompanies(data.companies, incoming.companies);
-        if(incoming.statuses) data.statuses = mergeNamedList(data.statuses, incoming.statuses);
-        if(incoming.tagsCatalog) data.tagsCatalog = mergeNamedList(data.tagsCatalog, incoming.tagsCatalog);
-      } else if(use==='settings'){
-        applyExportedSettings(raw.settings||incoming);
+      if(section==='issues'){
+        if(!Array.isArray(incoming.issues)) throw new Error('No issues array in file');
+        data.issues=mergeById(data.issues, incoming.issues);
+      } else if(section==='prs'){
+        if(!Array.isArray(incoming.prs)) throw new Error('No PRs array in file');
+        data.prs=mergeById(data.prs, incoming.prs);
+      } else if(section==='destinations'){
+        if(!Array.isArray(incoming.destinations)) throw new Error('No destinations array in file');
+        data.destinations=mergeById(data.destinations, incoming.destinations);
+      } else if(section==='versions'){
+        if(!Array.isArray(incoming.versions)) throw new Error('No versions array in file');
+        data.versions=mergeNamedList(data.versions, incoming.versions);
+      } else if(section==='lists'){
+        if(incoming.companies) data.companies=mergeCompanies(data.companies, incoming.companies);
+        if(incoming.statuses) data.statuses=mergeNamedList(data.statuses, incoming.statuses);
+        if(incoming.tagsCatalog) data.tagsCatalog=mergeNamedList(data.tagsCatalog, incoming.tagsCatalog);
+      } else if(section==='settings'){
+        applyExportedSettings(norm.settings||incoming);
         refreshAllPages();
         alert('Settings imported.');
         return;
       } else {
-        throw new Error('Unknown section: '+use);
+        throw new Error('Unknown section: '+section);
       }
 
-      data = migrateData(data);
-      save();
+      data=migrateData(data);
+      try{ localStorage.setItem(KEY, JSON.stringify(data)); }catch(err){ console.error(err); }
       refreshAllPages();
-      alert('Imported '+use+' (merged with existing data).');
+      alert('Imported '+section+' (merged with existing data).');
     }catch(err){
       console.error(err);
-      alert('Invalid import file: '+(err.message||err));
+      alert('Import failed: '+(err.message||err));
     }
   };
-  r.readAsText(file); e.target.value='';
+  r.readAsText(file, 'utf-8');
+  if(e && e.target) e.target.value='';
 }
 function importData(e){ _importSection='all'; importSectionFile(e); }
+
+
 
 
 
@@ -3287,5 +3335,6 @@ try {
 } catch(e) {}
 
 </script>
+<input id="importFile" type="file" accept=".json,application/json,text/json,*/*" class="hidden" onchange="importSectionFile(event)">
 </body>
 </html>
