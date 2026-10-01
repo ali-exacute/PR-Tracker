@@ -77,6 +77,14 @@ button {
 .nav-label {
 	min-width: 0;
 }
+.nav-icon {
+	width: 20px;
+	flex: 0 0 20px;
+	text-align: center;
+}
+.nav-label {
+	min-width: 0;
+}
 .nav button:hover,
 .nav button.active {
 	background: var(--accent-soft);
