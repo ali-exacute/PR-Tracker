@@ -206,6 +206,15 @@ body.dark .ss-search{border-color:var(--border)}
 .view-chip .x:hover{opacity:1;color:#a63c3c}
 body.dark .view-chip{background:var(--panel)}
 
+
+.card.issue-card.drag-over{outline:2px dashed var(--accent);outline-offset:2px}
+.card.issue-card.dragging{opacity:.45}
+.drag-handle{cursor:grab;user-select:none;padding:6px 8px;margin:-4px 2px -4px -4px;color:var(--muted);font-size:16px;line-height:1;border-radius:6px;flex-shrink:0;touch-action:none}
+.drag-handle:hover{background:var(--accent-soft);color:var(--accent)}
+.drag-handle:active{cursor:grabbing}
+body.dark .drag-handle:hover{background:#2a3140}
+
+.card-head{display:flex;align-items:flex-start;gap:6px}
 </style>
 </head>
 <body>
@@ -2126,6 +2135,72 @@ function filterIssuePrs(issueId){
   }
 }
 
+
+function sortedIssues(list){
+  const arr=[...(list||[])];
+  const hasManual=arr.some(i=>typeof i.sortOrder==='number');
+  if(hasManual){
+    arr.sort((a,b)=>{
+      const ao=typeof a.sortOrder==='number'?a.sortOrder:1e15;
+      const bo=typeof b.sortOrder==='number'?b.sortOrder:1e15;
+      if(ao!==bo) return ao-bo;
+      return String(a.createdAt||'').localeCompare(String(b.createdAt||''));
+    });
+  } else {
+    arr.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')) || String(a.id||'').localeCompare(String(b.id||'')));
+  }
+  return arr;
+}
+function nextIssueSortOrder(){
+  let max=-1;
+  (data.issues||[]).forEach(i=>{ if(typeof i.sortOrder==='number' && i.sortOrder>max) max=i.sortOrder; });
+  return max+1;
+}
+let _dragIssueId=null;
+function onIssueDragStart(e, id){
+  _dragIssueId=id;
+  e.dataTransfer.effectAllowed='move';
+  try{ e.dataTransfer.setData('text/plain', id); }catch(err){}
+  const card=e.target.closest('.issue-card');
+  if(card) setTimeout(()=>card.classList.add('dragging'), 0);
+}
+function onIssueDragEnd(e){
+  document.querySelectorAll('.issue-card.dragging,.issue-card.drag-over').forEach(el=>{
+    el.classList.remove('dragging'); el.classList.remove('drag-over');
+  });
+  _dragIssueId=null;
+}
+function onIssueDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  const card=e.currentTarget;
+  document.querySelectorAll('.issue-card.drag-over').forEach(el=>{ if(el!==card) el.classList.remove('drag-over'); });
+  card.classList.add('drag-over');
+}
+function onIssueDragLeave(e){
+  if(e.currentTarget.contains(e.relatedTarget)) return;
+  e.currentTarget.classList.remove('drag-over');
+}
+function onIssueDrop(e, targetId){
+  e.preventDefault();
+  e.stopPropagation();
+  let fromId=null;
+  try{ fromId=e.dataTransfer.getData('text/plain'); }catch(err){}
+  fromId=fromId||_dragIssueId;
+  document.querySelectorAll('.issue-card.drag-over').forEach(el=>el.classList.remove('drag-over'));
+  if(!fromId || fromId===targetId) return;
+  let order=sortedIssues(data.issues).map(i=>i.id);
+  const fromIdx=order.indexOf(fromId);
+  if(fromIdx<0) return;
+  order.splice(fromIdx,1);
+  const newTo=order.indexOf(targetId);
+  if(newTo<0) order.push(fromId);
+  else order.splice(newTo, 0, fromId);
+  order.forEach((id,idx)=>{ const i=issue(id); if(i) i.sortOrder=idx; });
+  save();
+  renderIssues();
+}
+
 function renderIssues(){
   renderStats();
   ssMountFilter('issueVersionFilter','issueVersion', versionNames(), 'All versions', ()=>renderIssues());
@@ -2151,8 +2226,9 @@ function renderIssues(){
       && (!rv||i.reportedVersion===rv);
   });
   const el=document.getElementById('issueCards');
-  if(!arr.length){ el.innerHTML='<div class="empty">No issues match.</div>'; updateCollapseAllButton(); return; }
-  el.innerHTML=arr.map(i=>{
+  const sorted=sortedIssues(arr);
+  if(!sorted.length){ el.innerHTML='<div class="empty">No issues match.</div>'; updateCollapseAllButton(); return; }
+  el.innerHTML=sorted.map(i=>{
     const issuePrList=data.prs.filter(p=>p.issueId===i.id);
     const prs=issuePrList.map(p=>{
       const d=dest(p.destinationId); if(!d) return '';
@@ -2173,8 +2249,13 @@ function renderIssues(){
     }).join('');
     const statusOpts=['<option value="">All statuses</option>'].concat(statuses().map(s=>`<option value="${esc(s)}">${esc(s)}</option>`)).join('');
     const expanded=getExpanded(i.id);
-    return `<article class="card">
+    return `<article class="card issue-card" data-issue-id="${esc(i.id)}"
+      ondragover="onIssueDragOver(event)" ondragleave="onIssueDragLeave(event)" ondrop="onIssueDrop(event,'${esc(i.id)}')">
       <div class="card-head" style="cursor:pointer" data-id="${esc(i.id)}" onclick="onToggleIssue(this)">
+        <span class="drag-handle" title="Drag to reorder" draggable="true"
+          ondragstart="event.stopPropagation();onIssueDragStart(event,'${esc(i.id)}')"
+          ondragend="onIssueDragEnd(event)"
+          onclick="event.stopPropagation()">⠿</span>
         <div style="min-width:0">
           <div>${jiraHtml(i)}</div>
           <div dir="auto" class="card-title">${esc(i.description||'Untitled')}</div>
@@ -2276,7 +2357,7 @@ function saveIssue(e,id){
     if(existing && !existing.createdAt) x.createdAt = existing.updatedAt || nowIso();
     Object.assign(existing,x);
   } else {
-    data.issues.push({id:uid('i'), createdAt: nowIso(), ...x});
+    data.issues.push({id:uid('i'), createdAt: nowIso(), ...x, sortOrder: (typeof x.sortOrder==='number'?x.sortOrder:(data.issues.some(i=>typeof i.sortOrder==='number')?nextIssueSortOrder():undefined))});
   }
   save(); closeModal(); renderIssues();
 }
