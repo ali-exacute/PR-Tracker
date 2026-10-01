@@ -435,12 +435,16 @@ body.dark .view-chip{background:var(--panel)}
         <label>Gist ID (empty = create on first push)</label>
         <input dir="auto" id="cloudGistId" class="field" placeholder="Leave empty for first-time setup" onchange="saveSettings()" onblur="saveSettings()">
       </div>
+      <label class="check" style="display:inline-flex;margin-bottom:8px">
+        <input id="cloudRemember" type="checkbox" onchange="saveSettings()" checked> Remember passphrase, token & Gist ID on this browser (auto-unlock next visit)
+      </label>
+      <label class="check" style="display:inline-flex;margin-bottom:8px">
+        <input id="cloudAutoSync" type="checkbox" onchange="saveSettings()"> Auto-push after every change (when unlocked)
+      </label>
       <label class="check" style="display:inline-flex;margin-bottom:12px">
-        <input id="cloudAutoSync" type="checkbox" onchange="saveSettings()"> Auto-push to Gist after every change (when unlocked) — recommended on
+        <input id="cloudLiveSync" type="checkbox" onchange="saveSettings()"> Live sync — pull when this tab is focused & every 20s (other devices’ changes show up here)
       </label>
-      <label class="check" style="display:inline-flex;margin-bottom:12px;margin-left:0">
-        <input id="cloudPullOnUnlock" type="checkbox" onchange="saveSettings()"> Pull latest from Gist when unlocking (keeps this device up to date)
-      </label>
+      <div class="small" style="margin-bottom:10px;color:var(--muted)">Saved credentials stay in <b>this browser only</b>. Anyone with access to this PC profile can read them. Lock + uncheck “Remember” to clear.</div>
       <div class="actions" style="flex-wrap:wrap">
         <button type="button" class="btn primary" onclick="cloudUnlock()">Unlock</button>
         <button type="button" class="btn" onclick="cloudLock()">Lock</button>
@@ -515,15 +519,23 @@ const KEY='pr-tracker-v1';
 const cloudSession = {
   unlocked: false,
   token: '',
+  passphrase: '',
   key: null,
   saltB64: '',
   lastPush: null,
   lastPull: null,
+  lastPushMs: 0,
+  lastLocalEditMs: 0,
+  lastCloudAt: '',
   pushTimer: null,
+  pollTimer: null,
   gistFileSha: null,
   suppressPush: false,
-  pushing: false
+  pushing: false,
+  pulling: false
 };
+const CLOUD_CREDS_KEY='pr-tracker-cloud-creds-v1';
+
 
 const SETTINGS_KEY='pr-tracker-settings-v1';
 let settings=Object.assign({
@@ -536,7 +548,9 @@ let settings=Object.assign({
   savedViews:[],
   cloudGistId:'',
   cloudAutoSync:true,
-  cloudPullOnUnlock:true
+  cloudPullOnUnlock:true,
+  cloudRemember:true,
+  cloudLiveSync:true
 },JSON.parse(localStorage.getItem(SETTINGS_KEY)||'{}'));
 if(!Array.isArray(settings.savedViews)) settings.savedViews=[];
 let backupTimer=null;
@@ -804,9 +818,10 @@ save();
 
 function save(){
   try{ localStorage.setItem(KEY,JSON.stringify(data)); }catch(e){ console.error('localStorage save failed', e); }
-  // Cloud push only when fully initialized and unlocked
   try{
-    if(!cloudSession || !cloudSession.unlocked || !cloudSession.key || cloudSession.suppressPush) return;
+    if(!cloudSession || cloudSession.suppressPush) return;
+    cloudSession.lastLocalEditMs = Date.now();
+    if(!cloudSession.unlocked || !cloudSession.key) return;
     if(typeof settings==='undefined' || settings.cloudAutoSync===false) return;
     if(typeof scheduleCloudPush==='function') scheduleCloudPush();
   }catch(e){ /* settings/cloud not ready yet during boot */ }
@@ -825,8 +840,13 @@ function saveSettings(){
   const sb=val('azureSimpleBranches'); if(sb!==undefined) settings.azureSimpleBranches=sb;
   const gid=val('cloudGistId'); if(gid!==undefined) settings.cloudGistId=gid;
   const cas=document.getElementById('cloudAutoSync'); if(cas) settings.cloudAutoSync=!!cas.checked;
-  const cpu=document.getElementById('cloudPullOnUnlock'); if(cpu) settings.cloudPullOnUnlock=!!cpu.checked;
+  const clr=document.getElementById('cloudRemember'); if(clr) settings.cloudRemember=!!clr.checked;
+  const cls=document.getElementById('cloudLiveSync'); if(cls) settings.cloudLiveSync=!!cls.checked;
+  // keep pull-on-unlock aligned with live sync
+  settings.cloudPullOnUnlock = settings.cloudLiveSync!==false || settings.cloudPullOnUnlock!==false;
   localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));
+  if(settings.cloudRemember===false) clearSavedCloudCreds();
+  if(cloudSession.unlocked) startCloudLiveSync(); else stopCloudLiveSync();
   scheduleAutoBackup(); updateBackupInfo(); updateCloudSyncUI();
 }
 function toggleDarkMode(on){ settings.darkMode=!!on; localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings)); applyTheme(); }
@@ -1085,7 +1105,9 @@ function renderSettings(){
   set('azureSimpleBranches', settings.azureSimpleBranches||'developer');
   set('cloudGistId', settings.cloudGistId||'');
   const cas=document.getElementById('cloudAutoSync'); if(cas) cas.checked=settings.cloudAutoSync!==false;
-  const cpu=document.getElementById('cloudPullOnUnlock'); if(cpu) cpu.checked=settings.cloudPullOnUnlock!==false;
+  const clr=document.getElementById('cloudRemember'); if(clr) clr.checked=settings.cloudRemember!==false;
+  const cls=document.getElementById('cloudLiveSync'); if(cls) cls.checked=settings.cloudLiveSync!==false;
+  fillCloudCredFieldsFromStorage();
   applyTheme(); updateBackupInfo(); updateBackupFolderLabel(); updateCloudSyncUI();
 }
 
@@ -2830,13 +2852,56 @@ function cloudSetStatus(msg, isErr){
   el.textContent = msg;
 }
 
-async function cloudUnlock(){
-  const pass=(document.getElementById('cloudPassphrase')?.value||'').trim();
-  const token=(document.getElementById('cloudToken')?.value||'').trim();
-  if(!pass || pass.length<8){ cloudSetStatus('Passphrase must be at least 8 characters.', true); return; }
-  if(!token){ cloudSetStatus('GitHub token required (gist scope).', true); return; }
+
+function saveCloudCreds(pass, token){
   try{
-    // Prefer existing salt from cloud meta in localStorage
+    if(settings.cloudRemember===false){ clearSavedCloudCreds(); return; }
+    localStorage.setItem(CLOUD_CREDS_KEY, JSON.stringify({ passphrase: pass, token: token, savedAt: Date.now() }));
+  }catch(e){ console.warn('Could not save cloud creds', e); }
+}
+function clearSavedCloudCreds(){
+  try{ localStorage.removeItem(CLOUD_CREDS_KEY); }catch(e){}
+}
+function loadCloudCreds(){
+  try{ return JSON.parse(localStorage.getItem(CLOUD_CREDS_KEY)||'null'); }catch(e){ return null; }
+}
+function fillCloudCredFieldsFromStorage(){
+  const c=loadCloudCreds();
+  if(!c) return;
+  const p=document.getElementById('cloudPassphrase');
+  const t=document.getElementById('cloudToken');
+  if(p && !p.value && c.passphrase) p.value=c.passphrase;
+  if(t && !t.value && c.token) t.value=c.token;
+}
+function stopCloudLiveSync(){
+  if(cloudSession.pollTimer){ clearInterval(cloudSession.pollTimer); cloudSession.pollTimer=null; }
+}
+function startCloudLiveSync(){
+  stopCloudLiveSync();
+  if(!cloudSession.unlocked || settings.cloudLiveSync===false) return;
+  cloudSession.pollTimer=setInterval(()=>{
+    if(cloudSession.unlocked && !cloudSession.pushing && !cloudSession.pulling){
+      cloudPull({ silent:true, replaceConfirm:false, onlyIfNewer:true });
+    }
+  }, 20000);
+}
+async function cloudUnlock(fromAuto){
+  fillCloudCredFieldsFromStorage();
+  let pass=(document.getElementById('cloudPassphrase')?.value||'').trim();
+  let token=(document.getElementById('cloudToken')?.value||'').trim();
+  if(!pass || !token){
+    const c=loadCloudCreds();
+    if(c){ pass=pass||c.passphrase||''; token=token||c.token||''; }
+  }
+  if(!pass || pass.length<8){
+    if(!fromAuto) cloudSetStatus('Passphrase must be at least 8 characters.', true);
+    return false;
+  }
+  if(!token){
+    if(!fromAuto) cloudSetStatus('GitHub token required (gist scope).', true);
+    return false;
+  }
+  try{
     let saltB64=localStorage.getItem('pr-tracker-cloud-salt')||'';
     let saltBuf;
     if(saltB64){
@@ -2849,29 +2914,40 @@ async function cloudUnlock(){
     const key=await deriveCloudKey(pass, saltBuf);
     cloudSession.unlocked=true;
     cloudSession.token=token;
+    cloudSession.passphrase=pass;
     cloudSession.key=key;
     cloudSession.saltB64=saltB64;
-    // keep token only in memory / sessionStorage for this tab
-    try{ sessionStorage.setItem('pr-tracker-cloud-token', token); }catch(e){}
-    cloudSetStatus('Unlocked.', false);
+    saveCloudCreds(pass, token);
+    // also persist gist id field
+    saveSettings();
+    cloudSetStatus(fromAuto?'Auto-unlocked.':'Unlocked — credentials saved on this browser.', false);
     updateCloudSyncUI();
+    startCloudLiveSync();
     const gistId=(settings.cloudGistId||document.getElementById('cloudGistId')?.value||'').trim();
-    if(gistId && settings.cloudPullOnUnlock!==false){
-      cloudPull({silent:true, replaceConfirm:false});
+    if(gistId && settings.cloudLiveSync!==false){
+      await cloudPull({silent:true, replaceConfirm:false, onlyIfNewer:false});
     }
+    return true;
   }catch(e){
     console.error(e);
-    cloudSetStatus('Unlock failed: '+(e.message||e), true);
+    if(!fromAuto) cloudSetStatus('Unlock failed: '+(e.message||e), true);
+    return false;
   }
 }
 function cloudLock(){
   cloudSession.unlocked=false;
   cloudSession.token='';
+  cloudSession.passphrase='';
   cloudSession.key=null;
-  try{ sessionStorage.removeItem('pr-tracker-cloud-token'); }catch(e){}
-  const p=document.getElementById('cloudPassphrase'); if(p) p.value='';
-  const t=document.getElementById('cloudToken'); if(t) t.value='';
+  stopCloudLiveSync();
+  const remember=settings.cloudRemember!==false;
+  if(!remember){
+    clearSavedCloudCreds();
+    const p=document.getElementById('cloudPassphrase'); if(p) p.value='';
+    const t=document.getElementById('cloudToken'); if(t) t.value='';
+  }
   updateCloudSyncUI();
+  cloudSetStatus(remember?'Locked (saved credentials kept for next visit).':'Locked — saved credentials cleared.', false);
 }
 
 function cloudHeaders(){
@@ -2911,7 +2987,7 @@ async function cloudPush(manual){
       plain._salt=bufToB64(saltBuf);
       cloudSession.saltB64=plain._salt;
       localStorage.setItem('pr-tracker-cloud-salt', plain._salt);
-      const pass=(document.getElementById('cloudPassphrase')?.value||'').trim();
+      const pass=cloudSession.passphrase||(document.getElementById('cloudPassphrase')?.value||'').trim();
       if(!pass) throw new Error('Passphrase required to establish salt');
       cloudSession.key=await deriveCloudKey(pass, saltBuf);
     }
@@ -2975,6 +3051,8 @@ async function cloudPush(manual){
       const g=document.getElementById('cloudGistId'); if(g) g.value=json.id;
     }
     cloudSession.lastPush=new Date().toLocaleString();
+    cloudSession.lastPushMs=Date.now();
+    cloudSession.lastCloudAt=new Date().toISOString();
     cloudSetStatus('Synced to Gist · '+settings.cloudGistId+(manual?' (manual)':''), false);
     updateCloudSyncUI();
   }catch(e){
@@ -2991,14 +3069,21 @@ async function cloudPull(opts){
     if(!opts.silent) cloudSetStatus('Unlock first (passphrase + token).', true);
     return;
   }
+  if(cloudSession.pulling || cloudSession.pushing) return;
   const gistId=(settings.cloudGistId||document.getElementById('cloudGistId')?.value||'').trim();
   if(!gistId){
     if(!opts.silent) cloudSetStatus('Enter a Gist ID to pull (from your other device).', true);
     return;
   }
+  // Local has unsaved cloud push pending — push first instead of overwriting
+  if(opts.onlyIfNewer && cloudSession.lastLocalEditMs > (cloudSession.lastPushMs||0) + 800){
+    scheduleCloudPush();
+    return;
+  }
   if(opts.replaceConfirm!==false){
     if(!confirm('Pull from cloud and replace local data with the cloud copy? (Export all first if unsure.)')) return;
   }
+  cloudSession.pulling=true;
   if(!opts.silent) cloudSetStatus('Pulling…', false);
   try{
     const res=await fetch('https://api.github.com/gists/'+encodeURIComponent(gistId), { headers:cloudHeaders() });
@@ -3014,7 +3099,11 @@ async function cloudPull(opts){
     }
     const parsed=JSON.parse(content);
     if(!parsed.ciphertext || !parsed.salt) throw new Error('Gist is not a valid PR Tracker encrypted blob');
-    const pass=(document.getElementById('cloudPassphrase')?.value||'').trim();
+    const cloudSavedAt=parsed.savedAt || '';
+    if(opts.onlyIfNewer && cloudSavedAt && cloudSession.lastCloudAt && cloudSavedAt<=cloudSession.lastCloudAt){
+      return; // already up to date
+    }
+    const pass=cloudSession.passphrase||(document.getElementById('cloudPassphrase')?.value||'').trim();
     if(!pass) throw new Error('Passphrase required');
     const saltBuf=b64ToBuf(parsed.salt);
     cloudSession.key=await deriveCloudKey(pass, saltBuf);
@@ -3037,22 +3126,32 @@ async function cloudPull(opts){
       tagsCatalog:x.tagsCatalog||data.tagsCatalog
     };
     data=migrateData(base);
-    if(plain.settings) applyExportedSettings(plain.settings);
+    if(plain.settings){
+      const keepGist=settings.cloudGistId;
+      applyExportedSettings(plain.settings);
+      if(keepGist) settings.cloudGistId=keepGist;
+    }
     settings.cloudGistId=gistId;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     cloudSession.suppressPush=true;
     try{
       localStorage.setItem(KEY, JSON.stringify(data));
     }finally{
-      setTimeout(()=>{ cloudSession.suppressPush=false; }, 500);
+      setTimeout(()=>{ cloudSession.suppressPush=false; }, 800);
     }
     cloudSession.lastPull=new Date().toLocaleString();
+    cloudSession.lastCloudAt=cloudSavedAt || plain.exportedAt || cloudSession.lastCloudAt;
+    cloudSession.lastPushMs=Date.now(); // local matches cloud
     refreshAllPages();
-    cloudSetStatus(opts.silent ? 'Unlocked · pulled latest from Gist.' : 'Pulled and decrypted OK.', false);
+    if(!opts.silent || !opts.onlyIfNewer){
+      cloudSetStatus(opts.silent ? 'Synced from Gist.' : 'Pulled and decrypted OK.', false);
+    }
     updateCloudSyncUI();
   }catch(e){
     console.error(e);
-    cloudSetStatus('Pull failed: '+(e.message||e), true);
+    if(!opts.silent) cloudSetStatus('Pull failed: '+(e.message||e), true);
+  }finally{
+    cloudSession.pulling=false;
   }
 }
 
@@ -3084,7 +3183,9 @@ function exportableSettings(){
     backupMinutes: settings.backupMinutes||60,
     cloudGistId: settings.cloudGistId||'',
     cloudAutoSync: settings.cloudAutoSync!==false,
-    cloudPullOnUnlock: settings.cloudPullOnUnlock!==false
+    cloudPullOnUnlock: settings.cloudPullOnUnlock!==false,
+    cloudRemember: settings.cloudRemember!==false,
+    cloudLiveSync: settings.cloudLiveSync!==false
   };
 }
 function applyExportedSettings(s){
@@ -3326,13 +3427,35 @@ try {
   console.error('Startup render error', e);
 }
 try {
-  // Ensure nav works even if first render failed
   document.querySelectorAll('.nav button').forEach(btn=>{
     if(!btn.onclick && btn.dataset.page){
       btn.addEventListener('click', ()=>showPage(btn.dataset.page));
     }
   });
 } catch(e) {}
+
+// Auto-unlock if credentials were remembered
+(async function cloudAutoBoot(){
+  try{
+    fillCloudCredFieldsFromStorage();
+    const c=loadCloudCreds();
+    const hasGist=(settings.cloudGistId||'').trim();
+    if(c && c.passphrase && c.token && settings.cloudRemember!==false){
+      await cloudUnlock(true);
+    }
+  }catch(e){ console.warn('cloud auto-unlock', e); }
+})();
+
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible' && cloudSession.unlocked && settings.cloudLiveSync!==false){
+    cloudPull({ silent:true, replaceConfirm:false, onlyIfNewer:true });
+  }
+});
+window.addEventListener('focus', ()=>{
+  if(cloudSession.unlocked && settings.cloudLiveSync!==false){
+    cloudPull({ silent:true, replaceConfirm:false, onlyIfNewer:true });
+  }
+});
 
 </script>
 <input id="importFile" type="file" accept=".json,application/json,text/json,*/*" class="hidden" onchange="importSectionFile(event)">
