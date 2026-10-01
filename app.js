@@ -1084,14 +1084,15 @@ function renderVersionList() {
     const col = itemColor(v);
     return `<div class="version-row">
       <span class="chip" style="min-width:28px;justify-content:center">${idx + 1}</span>
-      <input type="color" class="color-input" title="Color (optional)" value="${col || '#e2e5e9'}" onchange="setVersionColor(${idx}, this.value)">
-      <button class="btn icon" title="Clear color" onclick="setVersionColor(${idx},'')">⌀</button>
+      ${listRowColorControls(col, `setVersionColor(${idx}, this.value)`, `setVersionColor(${idx},'')`)}
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(name)}"
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitVersionName(${idx}, this)">
-      <div class="order-btns">
-        <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveVersion(${idx},-1)">↑</button>
-        <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === data.versions.length - 1 ? 'disabled' : ''} onclick="moveVersion(${idx},1)">↓</button>
+      <div class="row-controls">
+        <div class="order-btns">
+          <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveVersion(${idx},-1)">↑</button>
+          <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === data.versions.length - 1 ? 'disabled' : ''} onclick="moveVersion(${idx},1)">↓</button>
+        </div>
         <button class="btn danger icon" title="Delete ${esc(name)}" aria-label="Delete ${esc(name)}" onclick="deleteVersion(${idx})" ${used ? 'disabled style="opacity:.45"' : ''}>×</button>
       </div>
     </div>`;
@@ -1141,7 +1142,7 @@ function renderLists() {
 function listRowColorControls(color, onChange, onClear) {
   return `<div class="catalog-color-controls">
     <input type="color" class="color-input" title="Color (optional)" aria-label="Color (optional)" value="${color || '#e2e5e9'}" onchange="${onChange}">
-    <button class="btn icon" title="Clear color" aria-label="Clear color" onclick="${onClear}">⌀</button>
+    <button class="btn icon color-reset" title="Reset color" aria-label="Reset color" onclick="${onClear}">↺</button>
   </div>`;
 }
 function renderStatusList() {
@@ -1159,9 +1160,11 @@ function renderStatusList() {
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(name)}"
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitStatusName(${idx}, this)">
-      <div class="order-btns">
-        <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveStatus(${idx},-1)">↑</button>
-        <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === list.length - 1 ? 'disabled' : ''} onclick="moveStatus(${idx},1)">↓</button>
+      <div class="row-controls">
+        <div class="order-btns">
+          <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveStatus(${idx},-1)">↑</button>
+          <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === list.length - 1 ? 'disabled' : ''} onclick="moveStatus(${idx},1)">↓</button>
+        </div>
         <button class="btn danger icon" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeStatus(${idx})">×</button>
       </div>
     </div>`;
@@ -1208,15 +1211,18 @@ function renderCompanyList() {
     const used = data.destinations.some(d => d.company === c.name);
     const inactive = c.active === false;
     const col = c.color || '';
-    return `<div class="catalog-row catalog-row--company" style="${inactive ? 'opacity:.55' : ''}">
+    return `<div class="catalog-row catalog-row--company ${inactive ? 'is-inactive' : ''}">
       ${listRowColorControls(col, `setCompanyColor(${idx}, this.value)`, `setCompanyColor(${idx},'')`)}
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(c.name)}"
         data-old="${esc(c.name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitCompanyName(${idx}, this)">
-      ${inactive ? '<span class="muted">(disabled)</span>' : ''}
-      <div class="catalog-actions">
-      <button class="btn icon" title="${inactive ? 'Enable' : 'Disable'}" onclick="toggleCompanyActive(${idx})">${inactive ? 'Enable' : 'Disable'}</button>
-      <button class="btn danger icon" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeCompany(${idx})">×</button>
+      <div class="catalog-actions catalog-company-actions">
+        <label class="toggle-switch">
+          <input type="checkbox" role="switch" aria-label="${esc(c.name)} active" ${inactive ? '' : 'checked'} onchange="toggleCompanyActive(${idx})">
+          <span class="toggle-track" aria-hidden="true"></span>
+          <span class="toggle-state">${inactive ? 'Inactive' : 'Active'}</span>
+        </label>
+        <button class="btn danger icon" title="Remove ${esc(c.name)}" aria-label="Remove ${esc(c.name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeCompany(${idx})">×</button>
       </div>
     </div>`;
   }).join('');
@@ -1824,7 +1830,7 @@ function renderIssues() {
       const searchBlob = [destLabel(d), d.branch, d.company, d.kind, p.status, (p.tags || []).join(' '), p.notes || '', p.prUrl || ''].join(' ').toLowerCase();
       return `<div class="pr-row" data-pr-id="${esc(p.id)}" data-status="${esc(p.status || '')}" data-search="${esc(searchBlob)}">
         <div class="pr-main">
-          <span class="pr-dest" dir="auto">${esc(destLabel(d))}</span>
+          <button type="button" class="pr-dest pr-destination-edit" dir="auto" data-pr="${esc(p.id)}" aria-label="Edit PR destination ${esc(destLabel(d))}" onclick="event.stopPropagation();onOpenPr(this)">${esc(destLabel(d))}</button>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             ${inlineStatusHtml(p.id, p.status)}
             <button class="btn edit" style="padding:3px 8px;font-size:11px" data-pr="${esc(p.id)}" onclick="onOpenPr(this)">Edit</button>
@@ -2149,7 +2155,7 @@ function renderPRs() {
     return `<div class="dest-row">
       <div>
         <div><b>${esc(i.jira)}</b> · ${esc(i.description)}</div>
-        <div class="muted">${esc(i.version)} → <b dir="auto">${esc(destLabel(d))}</b> · ${branchLinkHtml(d)}</div>
+        <div class="muted">${esc(i.version)} → <button type="button" class="pr-destination-edit" dir="auto" data-pr="${esc(p.id)}" aria-label="Edit PR destination ${esc(destLabel(d))}" onclick="onOpenPr(this)">${esc(destLabel(d))}</button> · ${branchLinkHtml(d)}</div>
         <div class="tags">${tagHtml(p.tags)}${p.prUrl ? ` · ${prUrlHtml(p)}` : ''}</div>
         ${p.notes ? `<div class="notes" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
         <div class="time-meta">Created ${formatTime(p.createdAt)} · Updated ${formatTime(p.updatedAt)}</div>
@@ -2224,7 +2230,7 @@ function renderDestinations() {
           <button class="btn" title="Create missing temp branches for every active company" data-id="${esc(m.id)}" onclick="onBulkTemps(this)">Temps for all companies</button>
           <button class="btn" data-master="${esc(m.id)}" onclick="onOpenTemp(this)">+ Temp</button>
           <button class="btn" data-id="${esc(m.id)}" onclick="onOpenMaster(this)">Edit</button>
-          <span class="chip" style="font-size:16px;padding:2px 8px">${expanded ? '▾' : '▸'}</span>
+          <button type="button" class="btn icon master-expand" title="${expanded ? 'Collapse' : 'Expand'} master" aria-label="${expanded ? 'Collapse' : 'Expand'} ${esc(m.name)}" aria-expanded="${expanded}" data-id="${esc(m.id)}" onclick="event.stopPropagation();onToggleMaster(this)">${expanded ? '▾' : '▸'}</button>
         </div>
       </div>
       <div class="master-body ${expanded ? '' : 'hidden'}">
