@@ -52,9 +52,11 @@
               <div id="issuePrStatusFilter"></div>
               <div id="issueCompanyFilter"></div>
               <div id="issueReportedVerFilter"></div>
+              <div class="filter-actions">
+                <button id="clearIssueFiltersBtn" class="btn" type="button" onclick="clearIssueFilters()" disabled>Clear filters</button>
+              </div>
             </div>
           </details>
-          <button id="clearIssueFiltersBtn" class="btn" type="button" onclick="clearIssueFilters()" disabled>Clear filters</button>
           <input type="hidden" id="issueVersion" value="">
           <input type="hidden" id="issuePriority" value="">
           <input type="hidden" id="issueImportant" value="">
@@ -128,15 +130,17 @@
               V14+ line and later (not older lines).</div>
           </div>
           <div class="actions">
-            <input dir="auto" id="newVersionName" class="field" style="max-width:220px" placeholder="e.g. V16+"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();addVersion()}">
+            <div class="version-create">
+              <input dir="auto" id="newVersionName" class="field" placeholder="e.g. V16+"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();addVersion()}">
+              <button class="btn primary" onclick="addVersion()">+ Add version</button>
+            </div>
             <button class="btn" onclick="exportSection('versions')">Export</button>
             <button class="btn" onclick="triggerImport('versions')">Import</button>
-            <button class="btn primary" onclick="addVersion()">+ Add version</button>
           </div>
         </div>
-        <div class="card" style="padding:20px">
-          <div class="subtitle" style="margin-bottom:14px">
+        <div class="version-workspace">
+          <div class="version-note">
             Example: master <b>v14_master</b> with from-version <b>V14+</b> is available for issues on V14+, V15+, …
             Company temps under that master (Temp_14_Saman, …) inherit the same compatibility.
           </div>
@@ -156,36 +160,36 @@
           </div>
         </div>
         <div class="lists-grid">
-          <div class="card">
-            <h2 style="font-size:16px;margin:0 0 6px">Companies</h2>
-            <div class="subtitle" style="margin-bottom:12px">Used on temp branches. Disable a company to hide it from
+          <div class="card catalog-panel">
+            <h2 class="section-title">Companies</h2>
+            <div class="subtitle section-copy">Used on temp branches. Disable a company to hide it from
               bulk-create and new-temp dropdowns without deleting history.</div>
-            <div id="companyList" style="margin-bottom:10px"></div>
-            <div class="actions">
+            <div id="companyList" class="catalog-list"></div>
+            <div class="actions catalog-add">
               <input dir="auto" id="newCompanyName" class="field" style="flex:1" placeholder="e.g. Saman"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogItem('companies')}">
-              <button class="btn primary" onclick="addCatalogItem('companies')">+</button>
+              <button class="btn primary" aria-label="Add company" title="Add company" onclick="addCatalogItem('companies')">+</button>
             </div>
           </div>
-          <div class="card">
-            <h2 style="font-size:16px;margin:0 0 6px">PR statuses</h2>
-            <div class="subtitle" style="margin-bottom:12px">Statuses for PR destinations (order is display order).
+          <div class="card catalog-panel">
+            <h2 class="section-title">PR statuses</h2>
+            <div class="subtitle section-copy">Statuses for PR destinations (order is display order).
               Cannot remove a status that is in use.</div>
-            <div id="statusList" style="margin-bottom:10px"></div>
-            <div class="actions">
+            <div id="statusList" class="catalog-list"></div>
+            <div class="actions catalog-add">
               <input dir="auto" id="newStatusName" class="field" style="flex:1" placeholder="e.g. In Review"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();addStatus()}">
-              <button class="btn primary" onclick="addStatus()">+</button>
+              <button class="btn primary" aria-label="Add status" title="Add status" onclick="addStatus()">+</button>
             </div>
           </div>
-          <div class="card">
-            <h2 style="font-size:16px;margin:0 0 6px">Tags</h2>
-            <div class="subtitle" style="margin-bottom:12px">Reusable tags for issues and PRs.</div>
-            <div id="tagCatalogList" style="margin-bottom:10px"></div>
-            <div class="actions">
+          <div class="card catalog-panel">
+            <h2 class="section-title">Tags</h2>
+            <div class="subtitle section-copy">Reusable tags for issues and PRs.</div>
+            <div id="tagCatalogList" class="catalog-list"></div>
+            <div class="actions catalog-add">
               <input dir="auto" id="newTagName" class="field" style="flex:1" placeholder="e.g. Important"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogItem('tagsCatalog')}">
-              <button class="btn primary" onclick="addCatalogItem('tagsCatalog')">+</button>
+              <button class="btn primary" aria-label="Add tag" title="Add tag" onclick="addCatalogItem('tagsCatalog')">+</button>
             </div>
           </div>
         </div>

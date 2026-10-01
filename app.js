@@ -1090,9 +1090,9 @@ function renderVersionList() {
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitVersionName(${idx}, this)">
       <div class="order-btns">
-        <button class="btn icon" ${idx === 0 ? 'disabled' : ''} onclick="moveVersion(${idx},-1)">↑</button>
-        <button class="btn icon" ${idx === data.versions.length - 1 ? 'disabled' : ''} onclick="moveVersion(${idx},1)">↓</button>
-        <button class="btn danger icon" onclick="deleteVersion(${idx})" ${used ? 'disabled style="opacity:.45"' : ''}>×</button>
+        <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveVersion(${idx},-1)">↑</button>
+        <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === data.versions.length - 1 ? 'disabled' : ''} onclick="moveVersion(${idx},1)">↓</button>
+        <button class="btn danger icon" title="Delete ${esc(name)}" aria-label="Delete ${esc(name)}" onclick="deleteVersion(${idx})" ${used ? 'disabled style="opacity:.45"' : ''}>×</button>
       </div>
     </div>`;
   }).join('');
@@ -1139,8 +1139,10 @@ function renderLists() {
   renderTagList();
 }
 function listRowColorControls(color, onChange, onClear) {
-  return `<input type="color" class="color-input" title="Color (optional)" value="${color || '#e2e5e9'}" onchange="${onChange}">
-    <button class="btn icon" title="Clear color" onclick="${onClear}">⌀</button>`;
+  return `<div class="catalog-color-controls">
+    <input type="color" class="color-input" title="Color (optional)" aria-label="Color (optional)" value="${color || '#e2e5e9'}" onchange="${onChange}">
+    <button class="btn icon" title="Clear color" aria-label="Clear color" onclick="${onClear}">⌀</button>
+  </div>`;
 }
 function renderStatusList() {
   const el = document.getElementById('statusList'); if (!el) return;
@@ -1151,16 +1153,16 @@ function renderStatusList() {
     const name = itemName(s);
     const used = data.prs.some(p => p.status === name);
     const col = itemColor(s);
-    return `<div class="catalog-row">
+    return `<div class="catalog-row catalog-row--status">
       <span class="chip" style="min-width:28px;justify-content:center">${idx + 1}</span>
       ${listRowColorControls(col, `setStatusColor(${idx}, this.value)`, `setStatusColor(${idx},'')`)}
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(name)}"
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitStatusName(${idx}, this)">
       <div class="order-btns">
-        <button class="btn icon" ${idx === 0 ? 'disabled' : ''} onclick="moveStatus(${idx},-1)">↑</button>
-        <button class="btn icon" ${idx === list.length - 1 ? 'disabled' : ''} onclick="moveStatus(${idx},1)">↓</button>
-        <button class="btn danger icon" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeStatus(${idx})">×</button>
+        <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveStatus(${idx},-1)">↑</button>
+        <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === list.length - 1 ? 'disabled' : ''} onclick="moveStatus(${idx},1)">↓</button>
+        <button class="btn danger icon" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeStatus(${idx})">×</button>
       </div>
     </div>`;
   }).join('');
@@ -1206,14 +1208,16 @@ function renderCompanyList() {
     const used = data.destinations.some(d => d.company === c.name);
     const inactive = c.active === false;
     const col = c.color || '';
-    return `<div class="catalog-row" style="${inactive ? 'opacity:.55' : ''}">
+    return `<div class="catalog-row catalog-row--company" style="${inactive ? 'opacity:.55' : ''}">
       ${listRowColorControls(col, `setCompanyColor(${idx}, this.value)`, `setCompanyColor(${idx},'')`)}
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(c.name)}"
         data-old="${esc(c.name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitCompanyName(${idx}, this)">
       ${inactive ? '<span class="muted">(disabled)</span>' : ''}
+      <div class="catalog-actions">
       <button class="btn icon" title="${inactive ? 'Enable' : 'Disable'}" onclick="toggleCompanyActive(${idx})">${inactive ? 'Enable' : 'Disable'}</button>
       <button class="btn danger icon" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeCompany(${idx})">×</button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1251,12 +1255,14 @@ function renderTagList() {
     const name = itemName(t);
     const used = data.issues.some(i => (i.tags || []).includes(name)) || data.prs.some(p => (p.tags || []).includes(name));
     const col = itemColor(t);
-    return `<div class="catalog-row">
+    return `<div class="catalog-row catalog-row--tag">
       ${listRowColorControls(col, `setTagColor(${idx}, this.value)`, `setTagColor(${idx},'')`)}
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(name)}"
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitTagName(${idx}, this)">
-      <button class="btn danger icon" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeTag(${idx})">×</button>
+      <div class="catalog-actions">
+        <button class="btn danger icon" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeTag(${idx})">×</button>
+      </div>
     </div>`;
   }).join('');
 }
