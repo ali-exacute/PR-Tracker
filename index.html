@@ -144,7 +144,7 @@
             Example: master <b>v14_master</b> with from-version <b>V14+</b> is available for issues on V14+, V15+, …
             Company temps under that master (Temp_14_Saman, …) inherit the same compatibility.
           </div>
-          <div id="versionList"></div>
+          <div id="versionList" class="catalog-list version-list"></div>
         </div>
       </section>
 
@@ -152,47 +152,77 @@
         <div class="topbar">
           <div>
             <h1>Lists</h1>
-            <div class="subtitle">Companies, statuses, and tags used as dropdowns / pickers.</div>
+            <div class="subtitle">Manage the shared values used throughout the tracker.</div>
           </div>
           <div class="actions">
             <button class="btn" onclick="exportSection('lists')">Export</button>
             <button class="btn" onclick="triggerImport('lists')">Import</button>
           </div>
         </div>
-        <div class="lists-grid">
-          <div class="card catalog-panel">
-            <h2 class="section-title">Companies</h2>
-            <div class="subtitle section-copy">Used on temp branches. Disable a company to hide it from
-              bulk-create and new-temp dropdowns without deleting history.</div>
-            <div id="companyList" class="catalog-list"></div>
-            <div class="actions catalog-add">
-              <input dir="auto" id="newCompanyName" class="field" style="flex:1" placeholder="e.g. Saman"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogItem('companies')}">
-              <button class="btn primary" aria-label="Add company" title="Add company" onclick="addCatalogItem('companies')">+</button>
-            </div>
-          </div>
-          <div class="card catalog-panel">
-            <h2 class="section-title">PR statuses</h2>
-            <div class="subtitle section-copy">Statuses for PR destinations (order is display order).
-              Cannot remove a status that is in use.</div>
-            <div id="statusList" class="catalog-list"></div>
-            <div class="actions catalog-add">
-              <input dir="auto" id="newStatusName" class="field" style="flex:1" placeholder="e.g. In Review"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();addStatus()}">
-              <button class="btn primary" aria-label="Add status" title="Add status" onclick="addStatus()">+</button>
-            </div>
-          </div>
-          <div class="card catalog-panel">
-            <h2 class="section-title">Tags</h2>
-            <div class="subtitle section-copy">Reusable tags for issues and PRs.</div>
-            <div id="tagCatalogList" class="catalog-list"></div>
-            <div class="actions catalog-add">
-              <input dir="auto" id="newTagName" class="field" style="flex:1" placeholder="e.g. Important"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogItem('tagsCatalog')}">
-              <button class="btn primary" aria-label="Add tag" title="Add tag" onclick="addCatalogItem('tagsCatalog')">+</button>
-            </div>
-          </div>
+        <div class="catalog-tabs" role="tablist" aria-label="Catalog types">
+          <button id="companiesTab" class="catalog-tab active" type="button" role="tab" aria-selected="true"
+            aria-controls="companiesCatalog" onclick="showCatalogList('companies')">
+            <span>Companies</span><span id="companiesCount" class="catalog-count">0</span>
+          </button>
+          <button id="statusesTab" class="catalog-tab" type="button" role="tab" aria-selected="false"
+            aria-controls="statusesCatalog" onclick="showCatalogList('statuses')">
+            <span>PR statuses</span><span id="statusesCount" class="catalog-count">0</span>
+          </button>
+          <button id="tagsTab" class="catalog-tab" type="button" role="tab" aria-selected="false"
+            aria-controls="tagsCatalog" onclick="showCatalogList('tags')">
+            <span>Tags</span><span id="tagsCount" class="catalog-count">0</span>
+          </button>
         </div>
+        <div class="catalog-toolbar">
+          <input id="catalogSearch" class="field" type="search" placeholder="Search companies..."
+            oninput="filterCatalogRows()" aria-label="Search selected catalog">
+          <div id="catalogSummary" class="catalog-summary" aria-live="polite"></div>
+        </div>
+        <div class="catalog-workspace">
+          <section id="companiesCatalog" class="catalog-panel" data-list-panel="companies" role="tabpanel" aria-labelledby="companiesTab">
+            <div class="catalog-panel-head">
+              <div>
+                <h2>Companies</h2>
+                <p>Used on temporary branches. Deactivated companies stay in history but leave new-branch pickers.</p>
+              </div>
+              <div class="actions catalog-add">
+                <input dir="auto" id="newCompanyName" class="field" placeholder="Add a company"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogItem('companies')}">
+                <button class="btn primary" aria-label="Add company" title="Add company" onclick="addCatalogItem('companies')">+</button>
+              </div>
+            </div>
+            <div id="companyList" class="catalog-list"></div>
+          </section>
+          <section id="statusesCatalog" class="catalog-panel hidden" data-list-panel="statuses" role="tabpanel" aria-labelledby="statusesTab" hidden>
+            <div class="catalog-panel-head">
+              <div>
+                <h2>PR statuses</h2>
+                <p>Displayed in this order. Used statuses can’t be removed.</p>
+              </div>
+              <div class="actions catalog-add">
+                <input dir="auto" id="newStatusName" class="field" placeholder="Add a status"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();addStatus()}">
+                <button class="btn primary" aria-label="Add status" title="Add status" onclick="addStatus()">+</button>
+              </div>
+            </div>
+            <div id="statusList" class="catalog-list"></div>
+          </section>
+          <section id="tagsCatalog" class="catalog-panel hidden" data-list-panel="tags" role="tabpanel" aria-labelledby="tagsTab" hidden>
+            <div class="catalog-panel-head">
+              <div>
+                <h2>Tags</h2>
+                <p>Reusable labels for issues and PRs. Tags already in use can’t be removed.</p>
+              </div>
+              <div class="actions catalog-add">
+                <input dir="auto" id="newTagName" class="field" placeholder="Add a tag"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogItem('tagsCatalog')}">
+                <button class="btn primary" aria-label="Add tag" title="Add tag" onclick="addCatalogItem('tagsCatalog')">+</button>
+              </div>
+            </div>
+            <div id="tagCatalogList" class="catalog-list"></div>
+          </section>
+        </div>
+        <div id="catalogNoResults" class="empty hidden" role="status">No matching entries.</div>
       </section>
 
       <section id="settingsPage" class="hidden">

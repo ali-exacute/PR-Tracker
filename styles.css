@@ -9,6 +9,7 @@
 	--accent-soft: #e5f1eb;
 	--accent-ring: rgba(23, 107, 83, 0.16);
 	--danger: #b84648;
+	--danger-soft: #fff0ed;
 	--success: #287d55;
 	--warning: #b77720;
 	--shadow: 0 4px 16px rgba(28, 48, 37, 0.06);
@@ -163,6 +164,17 @@ h1 {
 }
 .info-box--spaced {
 	margin-bottom: 12px;
+}
+.backup-command {
+	display: block;
+	margin-top: 6px;
+	padding: 8px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--surface);
+	color: var(--text);
+	white-space: normal;
+	word-break: break-word;
 }
 .status-box {
 	margin-bottom: 12px;
@@ -832,25 +844,126 @@ textarea.field {
 	color: var(--muted);
 	font-size: 13px;
 }
-.lists-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-	gap: 14px;
-	align-items: start;
-}
-.lists-grid .card {
-	padding: 16px;
-}
 .catalog-panel {
 	min-width: 0;
+}
+.catalog-tabs {
+	display: flex;
+	align-items: end;
+	gap: 4px;
+	margin: 4px 0 0;
+	border-bottom: 1px solid var(--border);
+	overflow: visible;
+}
+.catalog-tab {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-height: 42px;
+	padding: 9px 14px;
+	border: 1px solid transparent;
+	border-bottom: 0;
+	border-radius: 8px 8px 0 0;
+	background: transparent;
+	color: var(--muted);
+	font-weight: 650;
+	white-space: nowrap;
+	transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.catalog-tab:hover {
+	background: var(--surface);
+	color: var(--text);
+}
+.catalog-tab.active {
+	position: relative;
+	margin-bottom: -1px;
+	border-color: var(--border);
+	background: var(--panel);
+	color: var(--accent);
+}
+.catalog-count {
+	display: inline-grid;
+	min-width: 21px;
+	height: 21px;
+	place-items: center;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 700;
+}
+.catalog-tab.active .catalog-count {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.catalog-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 12px 0;
+}
+.catalog-toolbar .field {
+	max-width: 420px;
+}
+.catalog-summary {
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+.catalog-workspace {
+	min-height: 260px;
+	padding: 18px;
+	border: 1px solid var(--border);
+	border-radius: 0 10px 10px 10px;
+	background: var(--panel);
+	box-shadow: var(--shadow);
+}
+.catalog-panel-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding-bottom: 14px;
+	margin-bottom: 14px;
+	border-bottom: 1px solid var(--border);
+}
+.catalog-panel-head h2 {
+	margin: 0 0 3px;
+	font-size: 16px;
+}
+.catalog-panel-head p {
+	margin: 0;
+	color: var(--muted);
+	font-size: 12px;
+}
+.catalog-panel-head .catalog-add {
+	flex: 0 1 380px;
+}
+.catalog-add .field {
+	min-width: 0;
+	flex: 1;
+}
+.catalog-empty {
+	padding: 18px 8px;
+	color: var(--muted);
+	font-size: 13px;
 }
 .catalog-list {
 	display: grid;
 	gap: 6px;
-	margin-bottom: 10px;
+}
+#companyList.catalog-list {
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+	align-items: start;
 }
 .catalog-list .catalog-row {
 	margin-bottom: 0;
+}
+.catalog-row.hidden {
+	display: none !important;
 }
 .catalog-color-controls,
 .catalog-actions {
@@ -887,6 +1000,18 @@ textarea.field {
 .catalog-actions .btn.icon {
 	min-width: 34px;
 	padding: 6px 8px;
+}
+.catalog-actions .btn.danger.icon,
+.row-controls > .btn.danger.icon {
+	border-color: transparent;
+	background: transparent;
+	color: var(--muted);
+}
+.catalog-actions .btn.danger.icon:not(:disabled):hover,
+.row-controls > .btn.danger.icon:not(:disabled):hover {
+	border-color: var(--danger-soft);
+	background: var(--danger-soft);
+	color: var(--danger);
 }
 .row-controls {
 	display: flex;
@@ -1057,6 +1182,35 @@ textarea.field {
 	min-width: 34px;
 	padding: 4px;
 	font-size: 17px;
+}
+.master-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+.master-temp-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 2px;
+}
+.master-temp-actions .master-add-temp {
+	min-height: 32px;
+	padding: 5px 10px;
+}
+.master-temp-actions .master-bulk-temps {
+	min-height: 26px;
+	padding: 3px 6px;
+	border-color: transparent;
+	background: transparent;
+	color: var(--muted);
+	font-size: 11px;
+}
+.master-temp-actions .master-bulk-temps:hover {
+	border-color: var(--accent-soft);
+	background: var(--accent-soft);
+	color: var(--accent);
 }
 .master-body {
 	border-top: 1px solid var(--border);
@@ -1255,12 +1409,47 @@ textarea.field {
 		width: min(680px, calc(100vw - 28px));
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
-	.lists-grid {
-		grid-template-columns: minmax(0, 1fr);
+	.catalog-toolbar {
+		align-items: stretch;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.catalog-tabs {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		align-items: stretch;
+		overflow: visible;
+	}
+	.catalog-tab {
+		min-width: 0;
+		flex-wrap: wrap;
+		gap: 5px;
+		padding: 8px 4px;
+		font-size: 11px;
+		white-space: normal;
+	}
+	.catalog-tab > span:first-child {
+		text-align: center;
+	}
+	.catalog-toolbar .field {
+		max-width: none;
+	}
+	.catalog-summary {
+		margin-left: 0;
+	}
+	.catalog-workspace {
+		min-height: 220px;
+		padding: 12px;
+		border-radius: 0 8px 8px 8px;
+	}
+	.catalog-panel-head {
+		align-items: stretch;
+		flex-direction: column;
 		gap: 10px;
 	}
-	.lists-grid .card {
-		padding: 14px;
+	.catalog-panel-head .catalog-add {
+		width: 100%;
+		flex: 1 1 auto;
 	}
 	.catalog-row {
 		display: grid;
@@ -1343,8 +1532,9 @@ textarea.field {
 		flex-direction: column;
 		padding: 12px;
 	}
-	.master-head > div:last-child {
+	.master-actions {
 		width: 100%;
+		justify-content: space-between;
 	}
 	.modal {
 		max-height: calc(100dvh - 24px);
@@ -1414,6 +1604,7 @@ body.dark {
 	--accent-soft: #2a4034;
 	--accent-ring: rgba(108, 195, 154, 0.2);
 	--danger: #ed7777;
+	--danger-soft: #492d2f;
 	--success: #55bd82;
 	--warning: #e4b354;
 	--shadow: 0 5px 18px rgba(0, 0, 0, 0.22);

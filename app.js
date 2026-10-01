@@ -445,7 +445,7 @@ function updateBackupFolderLabel() {
       note.innerHTML = `<b>Opened as a local file (<code>file://</code>)</b> — the browser blocks writing into folders from this context.<br><br>
         <b>What still works:</b> “Backup now” saves <code>${BACKUP_FILENAME}</code> via the browser save/download dialog (same filename every time; choose the HTML folder and overwrite when asked).<br><br>
         <b>Silent overwrite next to the HTML</b> needs a secure context. Easiest offline option if Python exists on the PC:<br>
-        <code style="display:block;margin-top:6px;padding:8px;background:#fff;border-radius:6px">cd folder-with-html<br>python -m http.server 8765</code>
+        <code class="backup-command">cd folder-with-html<br>python -m http.server 8765</code>
         Then open <code>http://localhost:8765/pr-tracker.html</code> and use “Choose backup folder…”.`;
     } else {
       note.innerHTML = `Secure context detected. Link a folder once; backups will silently overwrite <code>${BACKUP_FILENAME}</code> there.`;
@@ -1082,7 +1082,7 @@ function renderVersionList() {
     const name = itemName(v);
     const used = data.issues.some(i => i.version === name) || data.destinations.some(d => d.kind === 'master' && d.fromVersion === name);
     const col = itemColor(v);
-    return `<div class="version-row">
+    return `<div class="catalog-row catalog-row--version version-row">
       <span class="chip" style="min-width:28px;justify-content:center">${idx + 1}</span>
       ${listRowColorControls(col, `setVersionColor(${idx}, this.value)`, `setVersionColor(${idx},'')`)}
       <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(name)}"
@@ -1134,10 +1134,61 @@ function deleteVersion(idx) {
 }
 
 /* ── Lists ── */
+let activeCatalogList = 'companies';
+
 function renderLists() {
   renderCompanyList();
   renderStatusList();
   renderTagList();
+  showCatalogList(activeCatalogList, false);
+}
+function updateCatalogCounts() {
+  const counts = {
+    companies: document.querySelectorAll('#companyList .catalog-row').length,
+    statuses: document.querySelectorAll('#statusList .catalog-row').length,
+    tags: document.querySelectorAll('#tagCatalogList .catalog-row').length
+  };
+  Object.entries(counts).forEach(([name, count]) => {
+    const el = document.getElementById(name + 'Count');
+    if (el) el.textContent = String(count);
+  });
+}
+function showCatalogList(name, resetSearch = true) {
+  if (!['companies', 'statuses', 'tags'].includes(name)) return;
+  activeCatalogList = name;
+  document.querySelectorAll('.catalog-tab').forEach(tab => {
+    const active = tab.id === name + 'Tab';
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('[data-list-panel]').forEach(panel => {
+    const active = panel.dataset.listPanel === name;
+    panel.hidden = !active;
+    panel.classList.toggle('hidden', !active);
+  });
+  const search = document.getElementById('catalogSearch');
+  if (search) {
+    if (resetSearch) search.value = '';
+    search.placeholder = `Search ${name === 'statuses' ? 'PR statuses' : name}...`;
+  }
+  filterCatalogRows();
+}
+function filterCatalogRows() {
+  const panel = document.querySelector(`[data-list-panel="${activeCatalogList}"]`);
+  const query = (document.getElementById('catalogSearch')?.value || '').trim().toLowerCase();
+  if (!panel) return;
+  const rows = [...panel.querySelectorAll('.catalog-row')];
+  let visible = 0;
+  rows.forEach(row => {
+    const inputText = [...row.querySelectorAll('.name-edit')].map(input => input.value).join(' ');
+    const match = !query || `${inputText} ${row.textContent}`.toLowerCase().includes(query);
+    row.classList.toggle('hidden', !match);
+    if (match) visible++;
+  });
+  const summary = document.getElementById('catalogSummary');
+  if (summary) summary.textContent = query ? `${visible} of ${rows.length} shown` : `${rows.length} ${activeCatalogList === 'statuses' ? 'statuses' : activeCatalogList}`;
+  const noResults = document.getElementById('catalogNoResults');
+  if (noResults) noResults.classList.toggle('hidden', !query || !rows.length || visible > 0);
 }
 function listRowColorControls(color, onChange, onClear) {
   return `<div class="catalog-color-controls">
@@ -1149,7 +1200,10 @@ function renderStatusList() {
   const el = document.getElementById('statusList'); if (!el) return;
   if (!data.statuses) data.statuses = [];
   const list = data.statuses;
-  if (!list.length) { el.innerHTML = '<div class="muted" style="padding:8px 0">Empty — add below.</div>'; return; }
+  if (!list.length) {
+    el.innerHTML = '<div class="catalog-empty">No statuses yet. Add the first one above.</div>';
+    updateCatalogCounts(); filterCatalogRows(); return;
+  }
   el.innerHTML = list.map((s, idx) => {
     const name = itemName(s);
     const used = data.prs.some(p => p.status === name);
@@ -1169,6 +1223,7 @@ function renderStatusList() {
       </div>
     </div>`;
   }).join('');
+  updateCatalogCounts(); filterCatalogRows();
 }
 function setStatusColor(idx, color) {
   if (!data.statuses[idx]) return;
@@ -1206,7 +1261,10 @@ function removeStatus(idx) {
 function renderCompanyList() {
   const el = document.getElementById('companyList'); if (!el) return;
   const list = data.companies || [];
-  if (!list.length) { el.innerHTML = '<div class="muted" style="padding:8px 0">Empty — add below.</div>'; return; }
+  if (!list.length) {
+    el.innerHTML = '<div class="catalog-empty">No companies yet. Add the first one above.</div>';
+    updateCatalogCounts(); filterCatalogRows(); return;
+  }
   el.innerHTML = list.map((c, idx) => {
     const used = data.destinations.some(d => d.company === c.name);
     const inactive = c.active === false;
@@ -1226,6 +1284,7 @@ function renderCompanyList() {
       </div>
     </div>`;
   }).join('');
+  updateCatalogCounts(); filterCatalogRows();
 }
 function setCompanyColor(idx, color) {
   if (!data.companies[idx]) return;
@@ -1256,7 +1315,10 @@ function renderTagList() {
   const el = document.getElementById('tagCatalogList'); if (!el) return;
   if (!data.tagsCatalog) data.tagsCatalog = [];
   const list = data.tagsCatalog;
-  if (!list.length) { el.innerHTML = '<div class="muted" style="padding:8px 0">Empty — add below.</div>'; return; }
+  if (!list.length) {
+    el.innerHTML = '<div class="catalog-empty">No tags yet. Add the first one above.</div>';
+    updateCatalogCounts(); filterCatalogRows(); return;
+  }
   el.innerHTML = list.map((t, idx) => {
     const name = itemName(t);
     const used = data.issues.some(i => (i.tags || []).includes(name)) || data.prs.some(p => (p.tags || []).includes(name));
@@ -1271,6 +1333,7 @@ function renderTagList() {
       </div>
     </div>`;
   }).join('');
+  updateCatalogCounts(); filterCatalogRows();
 }
 function setTagColor(idx, color) {
   if (!data.tagsCatalog[idx]) return;
@@ -2226,10 +2289,12 @@ function renderDestinations() {
           </div>
           <div class="muted" style="margin-top:4px;font-size:12px">${fromVersionLabel(m.fromVersion)} · ${branchLinkHtml(m)} · ${temps.length} temp · Updated ${formatTime(m.updatedAt)}</div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap" onclick="event.stopPropagation()">
-          <button class="btn" title="Create missing temp branches for every active company" data-id="${esc(m.id)}" onclick="onBulkTemps(this)">Temps for all companies</button>
-          <button class="btn" data-master="${esc(m.id)}" onclick="onOpenTemp(this)">+ Temp</button>
-          <button class="btn" data-id="${esc(m.id)}" onclick="onOpenMaster(this)">Edit</button>
+        <div class="master-actions" onclick="event.stopPropagation()">
+          <div class="master-temp-actions">
+            <button class="btn primary master-add-temp" data-master="${esc(m.id)}" onclick="onOpenTemp(this)">+ Temp</button>
+            <button class="btn master-bulk-temps" title="Create missing temp branches for every active company" data-id="${esc(m.id)}" onclick="onBulkTemps(this)">Temps for all companies</button>
+          </div>
+          <button class="btn master-edit" data-id="${esc(m.id)}" onclick="onOpenMaster(this)">Edit</button>
           <button type="button" class="btn icon master-expand" title="${expanded ? 'Collapse' : 'Expand'} master" aria-label="${expanded ? 'Collapse' : 'Expand'} ${esc(m.name)}" aria-expanded="${expanded}" data-id="${esc(m.id)}" onclick="event.stopPropagation();onToggleMaster(this)">${expanded ? '▾' : '▸'}</button>
         </div>
       </div>
