@@ -1832,6 +1832,8 @@ function openBulkAddDestModal(issueId) {
   }
   window._bulkAvail = available;
   window._bulkGroups = groups;
+  window._bulkSelected = new Set();
+  window._bulkExpanded = new Set();
   let body = renderBulkDestList(groups, '').html;
   openModal(`<div class="modal-head"><h2>Bulk add destinations</h2><button class="kebab" onclick="closeModal()">×</button></div>
   <div class="modal-body">
@@ -1862,33 +1864,52 @@ function openBulkAddDestModal(issueId) {
 function bulkRowSearchBlob(d) {
   return [destLabel(d), d.branch, d.name, d.company, d.kind, d.fromVersion].filter(Boolean).join(' ').toLowerCase();
 }
+function bulkSearchTerms(query) {
+  return String(query || '').toLowerCase().replace(/[\W_]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
 function renderBulkDestList(groups, q) {
-  q = (q || '').toLowerCase().trim();
-  const match = d => !q || bulkRowSearchBlob(d).includes(q);
+  const terms = bulkSearchTerms(q);
+  const match = d => terms.every(term => bulkRowSearchBlob(d).replace(/[\W_]+/g, ' ').includes(term));
+  const selected = window._bulkSelected || new Set();
+  const expanded = window._bulkExpanded || new Set();
   let html = '', n = 0;
   groups.forEach(g => {
     if (g.orphan) {
       const temps = (g.temps || []).filter(match);
       if (!temps.length) return;
-      html += `<div class="ss-group">Other</div>` + temps.map(t => { n++; return bulkCheckRow(t, false); }).join('');
+      const isExpanded = expanded.has('__orphans__');
+      html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>Other</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('__orphans__')">Select group</button>
+          <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('__orphans__')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>
+        </span>
+      </div>`;
+      if (isExpanded) html += temps.map(t => { n++; return bulkCheckRow(t, false, selected); }).join('');
+      else n += temps.length;
       return;
     }
     const m = g.master;
     const temps = (g.temps || []).filter(match);
     const masterMatch = m && match(m);
     if (!masterMatch && !temps.length) return;
+    const isExpanded = expanded.has(m.id);
     html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
       <span>${esc(m.name)}</span>
-      <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('${esc(m.id)}')">Select group</button>
+      <span style="display:flex;align-items:center;gap:6px">
+        <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('${esc(m.id)}')">Select group</button>
+        ${temps.length ? `<button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('${esc(m.id)}')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>` : ''}
+      </span>
     </div>`;
     if (masterMatch) {
       n++;
       html += `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer">
-        <input type="checkbox" class="bulk-dest" value="${esc(m.id)}">
+        <input type="checkbox" class="bulk-dest" value="${esc(m.id)}" ${selected.has(m.id) ? 'checked' : ''} onchange="bulkSetSelected(this)">
         <span>◆ ${esc(m.name)} (master)</span>
       </label>`;
     }
-    html += temps.map(t => { n++; return bulkCheckRow(t, true); }).join('');
+    if (isExpanded) html += temps.map(t => { n++; return bulkCheckRow(t, true, selected); }).join('');
+    else n += temps.length;
   });
   if (!html) html = '<div class="muted" style="padding:12px;text-align:center">No destinations match.</div>';
   return { html, n };
@@ -1900,24 +1921,48 @@ function filterBulkDestList() {
   const list = document.getElementById('bulkDestList');
   if (list) list.innerHTML = r.html;
   const meta = document.getElementById('bulkDestMeta');
-  if (meta) meta.textContent = r.n + ' destination(s) shown';
+  if (meta) meta.textContent = `${r.n} matching · ${(window._bulkSelected || new Set()).size} selected`;
 }
-function bulkCheckRow(d, indent) {
+function bulkCheckRow(d, indent, selected) {
   return `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0 ${indent ? '0 0 0 18px' : '0'};cursor:pointer">
-    <input type="checkbox" class="bulk-dest" value="${esc(d.id)}" data-parent="${esc(d.parentId || '')}">
+    <input type="checkbox" class="bulk-dest" value="${esc(d.id)}" data-parent="${esc(d.parentId || '')}" ${selected.has(d.id) ? 'checked' : ''} onchange="bulkSetSelected(this)">
     <span dir="auto">${esc(destLabel(d))} <span class="muted">${d.kind === 'temp' ? ('· ' + esc(d.company || '')) : '· master'}</span></span>
   </label>`;
 }
 function bulkSelectAll(on) {
-  document.querySelectorAll('#modal .bulk-dest').forEach(c => { c.checked = !!on; });
+  const selected = window._bulkSelected || (window._bulkSelected = new Set());
+  if (!on) selected.clear();
+  else document.querySelectorAll('#modal .bulk-dest').forEach(c => selected.add(c.value));
+  filterBulkDestList();
 }
-function bulkSelectGroup(masterId) {
-  document.querySelectorAll('#modal .bulk-dest').forEach(c => {
-    if (c.value === masterId || c.getAttribute('data-parent') === masterId) c.checked = true;
-  });
+function bulkSetSelected(checkbox) {
+  const selected = window._bulkSelected || (window._bulkSelected = new Set());
+  if (checkbox.checked) selected.add(checkbox.value);
+  else selected.delete(checkbox.value);
+  const meta = document.getElementById('bulkDestMeta');
+  if (meta) meta.textContent = `${renderBulkDestList(window._bulkGroups || [], document.getElementById('bulkDestSearch')?.value || '').n} matching · ${selected.size} selected`;
+}
+function bulkToggleGroupExpanded(groupId) {
+  const expanded = window._bulkExpanded || (window._bulkExpanded = new Set());
+  if (expanded.has(groupId)) expanded.delete(groupId);
+  else expanded.add(groupId);
+  filterBulkDestList();
+}
+function bulkSelectGroup(groupId) {
+  const groups = window._bulkGroups || [];
+  const group = groupId === '__orphans__'
+    ? groups.find(g => g.orphan)
+    : groups.find(g => g.master && g.master.id === groupId);
+  if (!group) return;
+  const selected = window._bulkSelected || (window._bulkSelected = new Set());
+  const terms = bulkSearchTerms(document.getElementById('bulkDestSearch')?.value || '');
+  const match = d => terms.every(term => bulkRowSearchBlob(d).replace(/[\W_]+/g, ' ').includes(term));
+  if (group.master && match(group.master)) selected.add(group.master.id);
+  (group.temps || []).filter(match).forEach(temp => selected.add(temp.id));
+  filterBulkDestList();
 }
 function commitBulkAddDest(issueId) {
-  const ids = [...document.querySelectorAll('#modal .bulk-dest:checked')].map(c => c.value);
+  const ids = [...(window._bulkSelected || [])];
   if (!ids.length) { alert('Select at least one destination.'); return; }
   const status = (document.getElementById('bulkStatus')?.value) || defaultStatusName();
   const ts = nowIso();
