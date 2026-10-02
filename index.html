@@ -32,6 +32,13 @@
                 · N new · 1–6 tabs</span></div>
           </div>
           <div class="actions">
+            <div class="cloud-sync-group">
+              <div class="cloud-sync-buttons">
+                <button type="button" class="btn success" data-cloud-action="upload" onclick="cloudPush(true)">Upload to Gist</button>
+                <button type="button" class="btn" onclick="cloudPull()">Pull from Gist</button>
+              </div>
+              <span id="issueCloudSyncStatus" class="small cloud-action-status" aria-live="polite"></span>
+            </div>
             <button id="collapseAllBtn" class="btn secondary" onclick="toggleAllIssues()">Collapse all</button>
             <button class="btn" onclick="exportSection('issues')" title="Export issues only">Export</button>
             <button class="btn" onclick="triggerImport('issues')" title="Import issues">Import</button>
@@ -339,19 +346,20 @@
             (when unlocked) — no need to press Push
           </label>
           <div class="small soft-copy">
-            While unlocked, every edit is uploaded to your private Gist automatically.
-            On another device: Unlock → <b>Pull now</b> (manual). No automatic cross-device sync.
+            Auto-upload applies only in this browser. When unlocked, edits are uploaded automatically; on another device,
+            use <b>Pull from Gist</b> to update it manually. No automatic cross-device sync.
             Credentials stay in <b>this browser only</b>.
           </div>
           <div class="actions actions-wrap">
             <button type="button" class="btn primary" onclick="cloudUnlock()">Unlock</button>
             <button type="button" class="btn" onclick="cloudLock()">Lock</button>
-            <button type="button" class="btn success" onclick="cloudPush(true)">Push now</button>
-            <button type="button" class="btn" onclick="cloudPull()">Pull now</button>
+            <button type="button" class="btn success" data-cloud-action="upload" onclick="cloudPush(true)">Upload to Gist</button>
+            <button type="button" class="btn" onclick="cloudPull()">Pull from Gist</button>
           </div>
           <div class="small" style="margin-top:10px">
-            While <b>unlocked</b>, each save updates the private Gist (debounced ~1.5s so rapid edits batch). Each push
-            also writes a dated backup file inside the same Gist (last 5 kept). GitHub also keeps Gist revision history.
+            With auto-upload enabled and <b>unlocked</b>, each save updates the private Gist (debounced ~1.5s so rapid
+            edits batch). Each upload also writes a dated backup file inside the same Gist (last 5 kept). GitHub keeps
+            Gist revision history.
             Token: Developer settings → PAT with <b>only</b> <code>gist</code> scope.
           </div>
         </div>

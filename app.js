@@ -1,4 +1,6 @@
 const KEY = 'pr-tracker-v1';
+const CLOUD_PENDING_KEY = 'pr-tracker-cloud-pending-count-v1';
+const CLOUD_SYNCED_HASH_KEY = 'pr-tracker-cloud-synced-hash-v1';
 
 /* Cloud session object must exist before any save() call during boot */
 const cloudSession = {
@@ -11,6 +13,8 @@ const cloudSession = {
   lastPull: null,
   lastPushMs: 0,
   lastLocalEditMs: 0,
+  pendingChanges: 0,
+  syncedDataHash: '',
   lastCloudAt: '',
   pushTimer: null,
   pollTimer: null,
@@ -69,6 +73,42 @@ function readStoredJSON(key, fallback = null) {
     console.warn(`Could not read ${key} from storage`, e);
     return fallback;
   }
+}
+
+cloudSession.pendingChanges = Math.max(0, Number(readStoredJSON(CLOUD_PENDING_KEY, 0)) || 0);
+try { cloudSession.syncedDataHash = localStorage.getItem(CLOUD_SYNCED_HASH_KEY) || ''; } catch (e) { }
+
+function setCloudPendingChanges(count) {
+  cloudSession.pendingChanges = Math.max(0, Math.floor(Number(count) || 0));
+  try { localStorage.setItem(CLOUD_PENDING_KEY, JSON.stringify(cloudSession.pendingChanges)); } catch (e) { }
+  updateCloudActionUI();
+}
+
+function cloudDataFingerprint(serialized) {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < serialized.length; index++) {
+    const code = serialized.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code ^ index, 0x85ebca6b);
+  }
+  return (first >>> 0).toString(16) + '-' + (second >>> 0).toString(16);
+}
+
+function updateCloudPendingFromData(serialized, changed) {
+  const fingerprint = cloudDataFingerprint(serialized);
+  if (cloudSession.syncedDataHash && fingerprint === cloudSession.syncedDataHash) {
+    if (cloudSession.pendingChanges) setCloudPendingChanges(0);
+    return;
+  }
+  if (changed || (cloudSession.syncedDataHash && !cloudSession.pendingChanges)) {
+    setCloudPendingChanges(cloudSession.pendingChanges + 1);
+  }
+}
+
+function markCloudDataSynced(serialized) {
+  cloudSession.syncedDataHash = cloudDataFingerprint(serialized);
+  try { localStorage.setItem(CLOUD_SYNCED_HASH_KEY, cloudSession.syncedDataHash); } catch (e) { }
 }
 
 function uniqSorted(arr) {
@@ -418,7 +458,12 @@ try { data = migrateData(data); } catch (e) { console.error(e); }
 save();
 
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) { console.error('localStorage save failed', e); }
+  try {
+    const serialized = JSON.stringify(data);
+    const previous = localStorage.getItem(KEY);
+    localStorage.setItem(KEY, serialized);
+    if (!cloudSession.suppressPush) updateCloudPendingFromData(serialized, previous !== serialized);
+  } catch (e) { console.error('localStorage save failed', e); }
   try {
     if (!cloudSession || cloudSession.suppressPush) return;
     cloudSession.lastLocalEditMs = Date.now();
@@ -456,6 +501,7 @@ function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   if (settings.cloudRemember === false) clearSavedCloudCreds();
   stopCloudLiveSync();
+  if (settings.cloudAutoSync && cloudSession.unlocked && cloudSession.pendingChanges) scheduleCloudPush();
   scheduleAutoBackup(); updateBackupInfo(); updateBackupFolderLabel(); updateCloudSyncUI();
 }
 function toggleDarkMode(on) { settings.darkMode = !!on; localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); applyTheme(); }
@@ -3033,7 +3079,22 @@ function deleteTemp(id) {
 /* cloudSession defined at boot */
 
 
+function updateCloudActionUI() {
+  const pending = cloudSession.pendingChanges || 0;
+  document.querySelectorAll('[data-cloud-action="upload"]').forEach(button => {
+    button.textContent = pending ? `Upload to Gist (${pending})` : 'Upload to Gist';
+  });
+  const status = document.getElementById('issueCloudSyncStatus');
+  if (status) {
+    status.textContent = cloudSession.statusMessage
+      || (pending ? `${pending} change${pending === 1 ? '' : 's'} waiting to upload` : cloudSession.unlocked ? 'Ready to sync' : 'Locked · unlock in Settings');
+    status.classList.toggle('error', !!cloudSession.statusIsError);
+    status.title = status.textContent;
+  }
+}
+
 function updateCloudSyncUI() {
+  updateCloudActionUI();
   const el = document.getElementById('cloudSyncStatus');
   if (!el) return;
   if (cloudSession.unlocked) {
@@ -3084,10 +3145,14 @@ async function decryptPayload(wrapper, key) {
 }
 
 function cloudSetStatus(msg, isErr) {
+  cloudSession.statusMessage = String(msg || '');
+  cloudSession.statusIsError = !!isErr;
   const el = document.getElementById('cloudSyncStatus');
-  if (!el) return;
-  el.style.borderColor = isErr ? '#e35c5c' : (cloudSession.unlocked ? '#3ca875' : '');
-  el.textContent = msg;
+  if (el) {
+    el.style.borderColor = isErr ? '#e35c5c' : (cloudSession.unlocked ? '#3ca875' : '');
+    el.textContent = msg;
+  }
+  updateCloudActionUI();
 }
 
 
@@ -3156,11 +3221,10 @@ async function cloudUnlock(fromAuto) {
     cloudSession.key = key;
     cloudSession.saltB64 = saltB64;
     saveCloudCreds(pass, token);
-    // also persist gist id field
-    saveSettings();
     cloudSetStatus(fromAuto ? 'Auto-unlocked.' : 'Unlocked — credentials saved on this browser.', false);
     updateCloudSyncUI();
     stopCloudLiveSync();
+    if (settings.cloudAutoSync && cloudSession.pendingChanges) scheduleCloudPush();
     return true;
   } catch (e) {
     console.error(e);
@@ -3194,12 +3258,17 @@ function cloudHeaders() {
 }
 
 function cloudPlainBackup() {
+  const syncedSettings = exportableSettings();
+  delete syncedSettings.cloudAutoSync;
+  delete syncedSettings.cloudPullOnUnlock;
+  delete syncedSettings.cloudRemember;
+  delete syncedSettings.cloudLiveSync;
   return {
     version: 6,
     section: 'all',
     exportedAt: new Date().toISOString(),
     data: JSON.parse(JSON.stringify(data)),
-    settings: exportableSettings(),
+    settings: syncedSettings,
     // salt must travel with ciphertext so other devices can derive the same key
     _salt: cloudSession.saltB64 || localStorage.getItem('pr-tracker-cloud-salt') || ''
   };
@@ -3212,10 +3281,14 @@ async function cloudPush(manual) {
   }
   if (cloudSession.pushing) return;
   cloudSession.pushing = true;
+  let pendingAtStart = 0;
+  let uploaded = false;
   try {
-    saveSettings();
+    pendingAtStart = cloudSession.pendingChanges;
     if (manual) cloudSetStatus('Encrypting and pushing…', false);
     const plain = cloudPlainBackup();
+    const uploadedData = JSON.stringify(plain.data);
+    const uploadedHash = cloudDataFingerprint(uploadedData);
     if (!plain._salt) {
       const saltBuf = crypto.getRandomValues(new Uint8Array(16)).buffer;
       plain._salt = bufToB64(saltBuf);
@@ -3287,13 +3360,22 @@ async function cloudPush(manual) {
     cloudSession.lastPush = new Date().toLocaleString();
     cloudSession.lastPushMs = Date.now();
     cloudSession.lastCloudAt = new Date().toISOString();
-    cloudSetStatus('Synced to Gist · ' + settings.cloudGistId + (manual ? ' (manual)' : ''), false);
+    markCloudDataSynced(uploadedData);
+    if (cloudDataFingerprint(JSON.stringify(data)) === uploadedHash) {
+      setCloudPendingChanges(0);
+    } else {
+      setCloudPendingChanges(Math.max(1, cloudSession.pendingChanges - pendingAtStart));
+    }
+    uploaded = true;
+    cloudSetStatus('Uploaded to Gist · ' + settings.cloudGistId, false);
     updateCloudSyncUI();
   } catch (e) {
     console.error(e);
-    cloudSetStatus('Push failed: ' + (e.message || e), true);
+    cloudSetStatus('Upload failed: ' + (e.message || e), true);
   } finally {
     cloudSession.pushing = false;
+    updateCloudActionUI();
+    if (uploaded && cloudSession.pendingChanges && settings.cloudAutoSync) scheduleCloudPush();
   }
 }
 
@@ -3374,6 +3456,8 @@ async function cloudPull(opts) {
     } finally {
       setTimeout(() => { cloudSession.suppressPush = false; }, 800);
     }
+    markCloudDataSynced(JSON.stringify(data));
+    setCloudPendingChanges(0);
     cloudSession.lastPull = new Date().toLocaleString();
     cloudSession.lastCloudAt = cloudSavedAt || plain.exportedAt || cloudSession.lastCloudAt;
     cloudSession.lastPushMs = Date.now(); // local matches cloud
@@ -3712,6 +3796,7 @@ try {
 } catch (e) { console.error('Startup prep error', e); }
 try {
   renderIssues();
+  updateCloudActionUI();
 } catch (e) {
   console.error('Startup render error', e);
 }

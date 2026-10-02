@@ -131,6 +131,39 @@ h1 {
 .actions-wrap {
 	flex-wrap: wrap;
 }
+.cloud-sync-group {
+	display: grid;
+	grid-template-rows: 36px 18px;
+	gap: 3px;
+	flex: 0 0 315px;
+}
+.cloud-sync-buttons {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+}
+.cloud-sync-buttons .btn {
+	width: 100%;
+	min-width: 0;
+	min-height: 36px;
+	padding: 8px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.cloud-action-status {
+	display: block;
+	width: 100%;
+	height: 18px;
+	line-height: 18px;
+	text-align: right;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.cloud-action-status.error {
+	color: #b42318;
+}
 .version-create {
 	display: flex;
 	align-items: center;
@@ -832,6 +865,12 @@ body.dark .prs-title {
 	font-size: 12px;
 }
 @media (max-width: 520px) {
+	.cloud-sync-group {
+		flex: 1 1 100%;
+	}
+	.cloud-action-status {
+		text-align: left;
+	}
 	.bulk-pr-link-row {
 		grid-template-columns: 1fr;
 		gap: 4px;
