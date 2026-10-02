@@ -1631,11 +1631,14 @@ function renderBulkDestList(groups, q) {
     const temps = (g.temps || []).filter(match);
     const masterMatch = m && match(m);
     if (!masterMatch && !temps.length) return;
-    html += `<div class="ss-group">${esc(m.name)}</div>`;
+    html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <span>${esc(m.name)}</span>
+      <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('${esc(m.id)}')">Select group</button>
+    </div>`;
     if (masterMatch) {
       n++;
       html += `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer">
-        <input type="checkbox" class="bulk-dest" value="${esc(m.id)}" onchange="bulkToggleGroup(this,'${esc(m.id)}')">
+        <input type="checkbox" class="bulk-dest" value="${esc(m.id)}">
         <span>◆ ${esc(m.name)} (master)</span>
       </label>`;
     }
@@ -1662,10 +1665,9 @@ function bulkCheckRow(d, indent) {
 function bulkSelectAll(on) {
   document.querySelectorAll('#modal .bulk-dest').forEach(c => { c.checked = !!on; });
 }
-function bulkToggleGroup(masterCb, masterId) {
-  const on = !!masterCb.checked;
+function bulkSelectGroup(masterId) {
   document.querySelectorAll('#modal .bulk-dest').forEach(c => {
-    if (c.value === masterId || c.getAttribute('data-parent') === masterId) c.checked = on;
+    if (c.value === masterId || c.getAttribute('data-parent') === masterId) c.checked = true;
   });
 }
 function commitBulkAddDest(issueId) {
