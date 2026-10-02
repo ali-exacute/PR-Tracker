@@ -2763,14 +2763,25 @@ input[type="color"].color-input {
 	color: var(--text-strong);
 	letter-spacing: -0.01em;
 }
+/* Keep the drag handle footprint fixed so the expanded issue content lines up
+   exactly with the title / chips / progress row above it. */
+.drag-handle {
+	width: 26px;
+	min-width: 26px;
+	padding: 6px 0;
+	text-align: center;
+}
 .card-desc {
-	padding: 0 18px 14px;
+	padding: 0 18px 14px 48px;
 	color: var(--text);
 	opacity: 0.88;
 	line-height: 1.6;
 }
+.card-desc:empty {
+	display: none;
+}
 .issue-secondary-meta {
-	padding: 0 18px 12px;
+	padding: 0 18px 12px 48px;
 }
 .section-card {
 	padding: 22px;
@@ -3328,7 +3339,7 @@ body.dark .view-chip {
 	}
 	.card-desc,
 	.issue-secondary-meta {
-		padding-left: 15px;
+		padding-left: 45px;
 		padding-right: 15px;
 	}
 }
@@ -3529,5 +3540,200 @@ body.dark .btn.warning {
 }
 body.dark .btn.secondary {
 	border-color: var(--border-strong);
+}
+
+/* =====================================================================
+   Bulk add destinations modal
+   ---------------------------------------------------------------------
+   A roomier two-pane layout: pick destinations on the left, attach an
+   optional PR link to each on the right. All original IDs/handlers are
+   unchanged; this only restyles and rearranges the presentation.
+   ===================================================================== */
+#modal:has(.bulk-add) {
+	width: min(900px, 100%);
+}
+.bulk-issue-info {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+.bulk-issue-desc {
+	min-width: 0;
+	color: var(--muted);
+	font-size: 12.5px;
+	overflow-wrap: anywhere;
+}
+.bulk-defaults {
+	display: grid;
+	gap: 12px;
+	margin-bottom: 16px;
+}
+.bulk-defaults .form-group {
+	margin-bottom: 0;
+}
+.bulk-status-field {
+	max-width: 400px;
+}
+.bulk-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+	gap: 18px;
+	align-items: start;
+	margin-bottom: 4px;
+}
+.bulk-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+.bulk-panel-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.bulk-panel-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 750;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+.bulk-panel-hint {
+	padding: 1px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-pill);
+	background: var(--surface-2);
+	color: var(--muted-2);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+}
+.bulk-dest-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.bulk-dest-list,
+.bulk-pr-links {
+	height: clamp(240px, 44vh, 420px);
+	max-height: none;
+	padding: 10px;
+	overflow: auto;
+	overscroll-behavior: contain;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+}
+.bulk-dest-list .ss-group {
+	padding: 10px 8px 4px;
+	color: var(--text-strong);
+	font-size: 12px;
+	font-weight: 750;
+	letter-spacing: 0;
+	text-transform: none;
+}
+.bulk-group-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.bulk-group-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.bulk-group-btn {
+	min-height: 30px;
+	padding: 4px 10px;
+	font-size: 11.5px;
+	font-weight: 650;
+	letter-spacing: 0;
+	text-transform: none;
+}
+.bulk-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 10px;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	transition: background-color 120ms ease, border-color 120ms ease;
+}
+.bulk-row:hover {
+	background: var(--surface-2);
+	border-color: var(--border);
+}
+.bulk-row.is-child {
+	padding-left: 28px;
+}
+.bulk-row > span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.bulk-row input[type="checkbox"] {
+	flex: 0 0 auto;
+}
+#bulkDestMeta {
+	min-height: 16px;
+}
+
+/* PR-links pane: a clear, full-width row per selected destination. */
+.bulk-pr-links:empty {
+	display: grid;
+	place-items: center;
+	padding: 18px;
+	color: var(--muted);
+	font-size: 13px;
+	text-align: center;
+}
+.bulk-pr-links:empty::before {
+	content: "Select destinations on the left — their PR links appear here. Adding links is optional.";
+	max-width: 34ch;
+	line-height: 1.5;
+}
+.bulk-pr-link-row {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 6px;
+	margin: 0 0 8px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--panel);
+}
+.bulk-pr-link-row:last-child {
+	margin-bottom: 0;
+}
+.bulk-pr-link-row > span {
+	color: var(--text-strong);
+	font-size: 12.5px;
+	font-weight: 650;
+	overflow-wrap: anywhere;
+}
+.bulk-pr-link-row .field {
+	min-height: 36px;
+	padding: 7px 10px;
+	font-size: 13px;
+}
+
+@media (max-width: 640px) {
+	.bulk-dest-list,
+	.bulk-pr-links {
+		height: clamp(200px, 40vh, 340px);
+	}
 }
 

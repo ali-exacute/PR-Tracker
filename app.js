@@ -1915,24 +1915,33 @@ function openBulkAddDestModal(issueId) {
   window._bulkExpanded = new Set();
   let body = renderBulkDestList(groups, '').html;
   openModal(`<div class="modal-head"><h2>Bulk add destinations</h2><button class="kebab" onclick="closeModal()">×</button></div>
-  <div class="modal-body">
-    <div class="subtitle" style="margin-bottom:10px">${esc(i.jira || '')} · ${esc(i.description || '')} · ${esc(i.version || '')}</div>
-    <div class="form-group"><label>Initial status</label>
-      ${ssHtml({ id: 'bulkStatus', name: 'bulkStatus', options: statuses(), value: defaultStatusName() })}
+  <div class="modal-body bulk-add">
+    <div class="bulk-issue-info">
+      <span class="chip">${esc(i.jira || 'Untitled issue')}</span>
+      ${i.version ? `<span class="chip">${esc(i.version)}</span>` : ''}
+      ${i.description ? `<span class="bulk-issue-desc" dir="auto">${esc(i.description)}</span>` : ''}
     </div>
-    <div class="form-group"><label>Initial tags</label>${tagPickerHtml(i.tags || [])}</div>
-    <div class="form-group">
-      <label>Search destinations</label>
-      <input dir="auto" id="bulkDestSearch" class="field" placeholder="Search branch, company, master…" oninput="filterBulkDestList()">
-    </div>
-    <div class="form-group">
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button type="button" class="btn" onclick="bulkSelectAll(true)">Select all visible</button>
-        <button type="button" class="btn" onclick="bulkSelectAll(false)">Select none</button>
+    <div class="bulk-defaults">
+      <div class="form-group bulk-status-field"><label>Initial status</label>
+        ${ssHtml({ id: 'bulkStatus', name: 'bulkStatus', options: statuses(), value: defaultStatusName() })}
       </div>
-      <div id="bulkDestList" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px">${body}</div>
-      <div id="bulkDestMeta" class="small" style="margin-top:6px"></div>
-      <div id="bulkPrLinks" class="bulk-pr-links"></div>
+      <div class="form-group"><label>Initial tags</label>${tagPickerHtml(i.tags || [])}</div>
+    </div>
+    <div class="bulk-grid">
+      <section class="bulk-panel">
+        <div class="bulk-panel-head"><h3 class="bulk-panel-title">Destinations</h3></div>
+        <input dir="auto" id="bulkDestSearch" class="field" placeholder="Search branch, company, master…" oninput="filterBulkDestList()">
+        <div class="bulk-dest-toolbar">
+          <button type="button" class="btn" onclick="bulkSelectAll(true)">Select all visible</button>
+          <button type="button" class="btn" onclick="bulkSelectAll(false)">Select none</button>
+        </div>
+        <div id="bulkDestList" class="bulk-dest-list">${body}</div>
+        <div id="bulkDestMeta" class="small"></div>
+      </section>
+      <section class="bulk-panel">
+        <div class="bulk-panel-head"><h3 class="bulk-panel-title">PR links<span class="bulk-panel-hint">optional</span></h3></div>
+        <div id="bulkPrLinks" class="bulk-pr-links"></div>
+      </section>
     </div>
     <div class="form-actions">
       <button type="button" class="btn" onclick="closeModal()">Cancel</button>
@@ -1949,11 +1958,11 @@ function renderBulkPrLinks() {
   const urls = window._bulkPrUrls || (window._bulkPrUrls = {});
   const destinations = window._bulkDestById || new Map();
   const rows = [...selected].map(id => destinations.get(id)).filter(Boolean);
-  container.innerHTML = rows.length ? `<div class="bulk-pr-links-title">PR links</div>${rows.map(d => `
+  container.innerHTML = rows.map(d => `
     <label class="bulk-pr-link-row" for="bulkPrUrl-${esc(d.id)}">
       <span dir="auto">${esc(destLabel(d))}</span>
       <input dir="auto" type="url" id="bulkPrUrl-${esc(d.id)}" class="field" placeholder="https://..." value="${esc(urls[d.id] || '')}" oninput="bulkSetPrUrl('${esc(d.id)}', this.value)">
-    </label>`).join('')}` : '';
+    </label>`).join('');
 }
 function updateBulkPrLinkRow(destinationId, selected) {
   const container = document.getElementById('bulkPrLinks');
@@ -1962,9 +1971,6 @@ function updateBulkPrLinkRow(destinationId, selected) {
   if (selected && !input) {
     const destination = (window._bulkDestById || new Map()).get(destinationId);
     if (!destination) return;
-    if (!container.querySelector('.bulk-pr-links-title')) {
-      container.innerHTML = '<div class="bulk-pr-links-title">PR links</div>';
-    }
     container.insertAdjacentHTML('beforeend', `<label class="bulk-pr-link-row" for="bulkPrUrl-${esc(destination.id)}">
       <span dir="auto">${esc(destLabel(destination))}</span>
       <input dir="auto" type="url" id="bulkPrUrl-${esc(destination.id)}" class="field" placeholder="https://..." value="${esc((window._bulkPrUrls || {})[destination.id] || '')}" oninput="bulkSetPrUrl('${esc(destination.id)}', this.value)">
@@ -1992,11 +1998,11 @@ function renderBulkDestList(groups, q) {
       const temps = (g.temps || []).filter(match);
       if (!temps.length) return;
       const isExpanded = terms.length > 0 || expanded.has('__orphans__');
-      html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      html += `<div class="ss-group bulk-group-head">
         <span>Other</span>
-        <span style="display:flex;align-items:center;gap:6px">
-          <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('__orphans__')">Select group</button>
-          ${terms.length ? '' : `<button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('__orphans__')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>`}
+        <span class="bulk-group-actions">
+          <button type="button" class="btn bulk-group-btn" onclick="bulkSelectGroup('__orphans__')">Select group</button>
+          ${terms.length ? '' : `<button type="button" class="btn bulk-group-btn" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('__orphans__')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>`}
         </span>
       </div>`;
       if (isExpanded) html += temps.map(t => { n++; return bulkCheckRow(t, false, selected); }).join('');
@@ -2008,16 +2014,16 @@ function renderBulkDestList(groups, q) {
     const masterMatch = m && match(m);
     if (!masterMatch && !temps.length) return;
     const isExpanded = terms.length > 0 || expanded.has(m.id);
-    html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    html += `<div class="ss-group bulk-group-head">
       <span>${esc(m.name)}</span>
-      <span style="display:flex;align-items:center;gap:6px">
-        <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('${esc(m.id)}')">Select group</button>
-        ${temps.length && !terms.length ? `<button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('${esc(m.id)}')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>` : ''}
+      <span class="bulk-group-actions">
+        <button type="button" class="btn bulk-group-btn" onclick="bulkSelectGroup('${esc(m.id)}')">Select group</button>
+        ${temps.length && !terms.length ? `<button type="button" class="btn bulk-group-btn" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('${esc(m.id)}')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>` : ''}
       </span>
     </div>`;
     if (masterMatch) {
       n++;
-      html += `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer">
+      html += `<label class="check bulk-row">
         <input type="checkbox" class="bulk-dest" value="${esc(m.id)}" ${selected.has(m.id) ? 'checked' : ''} onchange="bulkSetSelected(this)">
         <span>◆ ${esc(m.name)} (master)</span>
       </label>`;
@@ -2040,7 +2046,7 @@ function filterBulkDestList() {
   renderBulkPrLinks();
 }
 function bulkCheckRow(d, indent, selected) {
-  return `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0 ${indent ? '0 0 0 18px' : '0'};cursor:pointer">
+  return `<label class="check bulk-row${indent ? ' is-child' : ''}">
     <input type="checkbox" class="bulk-dest" value="${esc(d.id)}" data-parent="${esc(d.parentId || '')}" ${selected.has(d.id) ? 'checked' : ''} onchange="bulkSetSelected(this)">
     <span dir="auto">${esc(destLabel(d))} <span class="muted">${d.kind === 'temp' ? ('· ' + esc(d.company || '')) : '· master'}</span></span>
   </label>`;
