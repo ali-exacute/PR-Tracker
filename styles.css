@@ -2375,6 +2375,8 @@ body.dark {
 /* ---- Base / global ---- */
 html {
 	-webkit-text-size-adjust: 100%;
+	/* Reserve the scrollbar gutter so locking page scroll can't shift layout. */
+	scrollbar-gutter: stable;
 }
 body {
 	background: linear-gradient(180deg, var(--bg) 0%, var(--bg-tint) 100%) fixed;
@@ -3042,6 +3044,23 @@ input[type="color"].color-input {
 	font-weight: 800;
 	letter-spacing: -0.01em;
 	color: var(--text-strong);
+}
+
+/* ---- Scroll containment ----
+   An open modal must never scroll the page behind it. We lock the document
+   while the overlay is shown (auto-tracks opening/closing, including Esc and
+   backdrop clicks) and stop inner scroll areas from chaining their scroll up
+   to the page once they hit their top/bottom edge. */
+body:has(#modalOverlay.show) {
+	overflow: hidden;
+}
+.modal {
+	overscroll-behavior: contain;
+}
+.prs-list,
+.ss-list,
+.inline-menu {
+	overscroll-behavior: contain;
 }
 
 /* ---- Dropdown / searchable select ---- */
