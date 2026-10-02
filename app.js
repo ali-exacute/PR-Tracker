@@ -992,19 +992,40 @@ function ensureInCatalog(listKey, value) {
 function ensureTagsInCatalog(tags) { (tags || []).forEach(t => ensureInCatalog('tagsCatalog', t)); }
 function statuses() { return statusNames(); }
 
+function modalStateSnapshot() {
+  const modal = document.getElementById('modal');
+  if (!modal) return '';
+  const controls = [...modal.querySelectorAll('input,select,textarea')]
+    .filter(el => el.type !== 'search' && el.id !== 'bulkDestSearch' && !el.closest('.ss-search'))
+    .map(el => ({
+      id: el.id,
+      name: el.name,
+      type: el.type,
+      value: el.value,
+      checked: el.type === 'checkbox' || el.type === 'radio' ? el.checked : undefined,
+      selected: el.tagName === 'SELECT' ? [...el.selectedOptions].map(option => option.value) : undefined
+    }));
+  const tags = [...modal.querySelectorAll('.tag-pick')].map(tag => [tag.dataset.tag, tag.classList.contains('on')]);
+  const bulkSelected = [...(window._bulkSelected || [])].sort();
+  return JSON.stringify({ controls, tags, bulkSelected });
+}
 function openModal(html) {
   document.getElementById('modal').innerHTML = html;
   document.getElementById('modalOverlay').classList.add('show');
+  window._modalInitialState = modalStateSnapshot();
   // focus first field
   setTimeout(() => {
     const f = document.querySelector('#modal input:not([type=hidden]):not([type=color]), #modal select, #modal textarea');
     if (f) try { f.focus(); } catch (e) { }
   }, 30);
 }
-function closeModal() {
+function closeModal(force = false) {
+  if (!force && modalStateSnapshot() !== window._modalInitialState && !confirm('Discard your unsaved changes?')) return false;
   document.getElementById('modalOverlay').classList.remove('show');
   document.getElementById('modal').innerHTML = '';
+  window._modalInitialState = '';
   document.removeEventListener('click', closeDestSSOnOutside);
+  return true;
 }
 function isTypingTarget(el) {
   if (!el) return false;
@@ -1781,9 +1802,10 @@ function onInlinePrStatus(el) {
   const p = data.prs.find(x => x.id === id); if (!p) return;
   const host = el.classList.contains('inline-hit') ? el : el.closest('.inline-hit') || el;
   openInlineMenu(host, statuses(), p.status, (val) => {
+    const scrollSnapshot = capturePrModalScroll(p.id, p.issueId);
     p.status = val; p.updatedAt = nowIso();
     const iss = issue(p.issueId); if (iss) iss.updatedAt = nowIso();
-    save(); renderIssues(); renderPRs();
+    save(); renderIssues(); renderPRs(); restorePrModalScroll(scrollSnapshot);
   }, 'PR status');
 }
 function onInlineIssuePriority(el) {
@@ -1830,6 +1852,7 @@ function onInlineDestActive(el) {
 }
 
 function openBulkAddDestModal(issueId) {
+  window._bulkModalScroll = capturePrModalScroll('', issueId);
   const i = issue(issueId); if (!i) return;
   const used = new Set(data.prs.filter(p => p.issueId === issueId).map(p => p.destinationId));
   const available = data.destinations.filter(d => compatible(i, d) && !used.has(d.id));
@@ -1883,12 +1906,12 @@ function renderBulkDestList(groups, q) {
     if (g.orphan) {
       const temps = (g.temps || []).filter(match);
       if (!temps.length) return;
-      const isExpanded = expanded.has('__orphans__');
+      const isExpanded = terms.length > 0 || expanded.has('__orphans__');
       html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
         <span>Other</span>
         <span style="display:flex;align-items:center;gap:6px">
           <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('__orphans__')">Select group</button>
-          <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('__orphans__')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>
+          ${terms.length ? '' : `<button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('__orphans__')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>`}
         </span>
       </div>`;
       if (isExpanded) html += temps.map(t => { n++; return bulkCheckRow(t, false, selected); }).join('');
@@ -1899,12 +1922,12 @@ function renderBulkDestList(groups, q) {
     const temps = (g.temps || []).filter(match);
     const masterMatch = m && match(m);
     if (!masterMatch && !temps.length) return;
-    const isExpanded = expanded.has(m.id);
+    const isExpanded = terms.length > 0 || expanded.has(m.id);
     html += `<div class="ss-group" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
       <span>${esc(m.name)}</span>
       <span style="display:flex;align-items:center;gap:6px">
         <button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" onclick="bulkSelectGroup('${esc(m.id)}')">Select group</button>
-        ${temps.length ? `<button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('${esc(m.id)}')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>` : ''}
+        ${temps.length && !terms.length ? `<button type="button" class="btn" style="padding:2px 6px;min-height:24px;font-size:11px;text-transform:none;letter-spacing:0" aria-expanded="${isExpanded}" onclick="bulkToggleGroupExpanded('${esc(m.id)}')">${isExpanded ? 'Hide' : `Show ${temps.length} temps`}</button>` : ''}
       </span>
     </div>`;
     if (masterMatch) {
@@ -1981,7 +2004,10 @@ function commitBulkAddDest(issueId) {
     used.add(did); n++;
   });
   const iss = issue(issueId); if (iss) iss.updatedAt = ts;
-  save(); closeModal(); renderIssues(); renderPRs();
+  const scrollSnapshot = window._bulkModalScroll;
+  window._bulkModalScroll = null;
+  save(); closeModal(true); renderIssues(); renderPRs();
+  restorePrModalScroll(scrollSnapshot);
   if (n) alert('Added ' + n + ' PR destination(s).');
 }
 
@@ -2372,13 +2398,13 @@ function saveIssue(e, id) {
   } else {
     data.issues.push({ id: uid('i'), createdAt: nowIso(), ...x, sortOrder: (typeof x.sortOrder === 'number' ? x.sortOrder : (data.issues.some(i => typeof i.sortOrder === 'number') ? nextIssueSortOrder() : undefined)) });
   }
-  save(); closeModal(); renderIssues();
+  save(); closeModal(true); renderIssues();
 }
 function deleteIssue(id) {
   if (!confirm('Delete this issue and its PR records?')) return;
   data.issues = data.issues.filter(i => i.id !== id);
   data.prs = data.prs.filter(p => p.issueId !== id);
-  save(); closeModal(); renderIssues();
+  save(); closeModal(true); renderIssues();
 }
 
 /* ── PRs ── */
@@ -2403,8 +2429,58 @@ function destSearchBlob(d) {
   return [d.name, d.branch, d.company, d.kind, effectiveFromVersion(d)].join(' ').toLowerCase();
 }
 
+function capturePrModalScroll(prId, issueId) {
+  const issueCard = [...document.querySelectorAll('.issue-card')].find(card => card.dataset.issueId === issueId);
+  let anchor = null, anchorType = '', anchorId = '';
+  if (prId) {
+    anchor = [...document.querySelectorAll('.pr-row[data-pr-id], .dest-row')].find(row =>
+      row.dataset.prId === prId || [...row.querySelectorAll('[data-pr]')].some(button => button.dataset.pr === prId)
+    );
+    if (anchor) {
+      anchorType = anchor.classList.contains('pr-row') ? 'pr' : 'destination';
+      anchorId = prId;
+    }
+  }
+  if (!anchor && issueCard) {
+    anchor = issueCard;
+    anchorType = 'issue';
+    anchorId = issueId;
+  }
+  return {
+    x: window.scrollX,
+    y: window.scrollY,
+    issueId,
+    listTop: issueCard?.querySelector('.prs-list')?.scrollTop || 0,
+    anchorType,
+    anchorId,
+    anchorTop: anchor?.getBoundingClientRect().top
+  };
+}
+function restorePrModalScroll(snapshot) {
+  if (!snapshot) return;
+  requestAnimationFrame(() => {
+    window.scrollTo(snapshot.x, snapshot.y);
+    const issueCard = [...document.querySelectorAll('.issue-card')].find(card => card.dataset.issueId === snapshot.issueId);
+    const list = issueCard?.querySelector('.prs-list');
+    if (list) list.scrollTop = snapshot.listTop;
+
+    let anchor = issueCard;
+    if (snapshot.anchorType === 'pr') {
+      anchor = [...document.querySelectorAll('.pr-row[data-pr-id]')].find(row => row.dataset.prId === snapshot.anchorId) || issueCard;
+    } else if (snapshot.anchorType === 'destination') {
+      anchor = [...document.querySelectorAll('.dest-row')].find(row =>
+        [...row.querySelectorAll('[data-pr]')].some(button => button.dataset.pr === snapshot.anchorId)
+      ) || issueCard;
+    }
+    if (anchor && Number.isFinite(snapshot.anchorTop)) {
+      window.scrollBy(0, anchor.getBoundingClientRect().top - snapshot.anchorTop);
+    }
+  });
+}
+
 function openPrModal(prId, issueId) {
   const p = prId ? data.prs.find(x => x.id === prId) : { issueId: issueId || data.issues[0]?.id || '', destinationId: '', status: defaultStatusName(), prUrl: '', tags: [], notes: '' };
+  window._prModalScroll = capturePrModalScroll(prId || '', p.issueId);
   const initialTags = prId ? (p.tags || []) : (issue(p.issueId)?.tags || []);
   const available = availableDestinationsForIssue(p.issueId, prId || '');
   const selected = dest(p.destinationId);
@@ -2545,11 +2621,17 @@ function savePr(e, id) {
   // touch parent issue
   const iss = issue(x.issueId);
   if (iss) { iss.updatedAt = nowIso(); if (!iss.createdAt) iss.createdAt = iss.updatedAt; }
-  save(); closeModal(); renderIssues(); renderPRs();
+  const scrollSnapshot = window._prModalScroll;
+  window._prModalScroll = null;
+  save(); closeModal(true); renderIssues(); renderPRs();
+  restorePrModalScroll(scrollSnapshot);
 }
 function deletePr(id) {
   if (!confirm('Delete this PR record?')) return;
-  data.prs = data.prs.filter(p => p.id !== id); save(); closeModal(); renderPRs(); renderIssues();
+  const scrollSnapshot = window._prModalScroll;
+  window._prModalScroll = null;
+  data.prs = data.prs.filter(p => p.id !== id); save(); closeModal(true); renderPRs(); renderIssues();
+  restorePrModalScroll(scrollSnapshot);
 }
 
 function renderPRs() {
@@ -2760,7 +2842,7 @@ function saveMaster(e, id) {
   } else {
     data.destinations.push({ id: uid('m'), createdAt: nowIso(), ...x });
   }
-  save(); closeModal(); renderDestinations();
+  save(); closeModal(true); renderDestinations();
 }
 function deleteMaster(id) {
   const kids = tempsOf(id);
@@ -2774,7 +2856,7 @@ function deleteMaster(id) {
   }
   if (!confirm('Delete this master?')) return;
   data.destinations = data.destinations.filter(d => d.id !== id);
-  save(); closeModal(); renderDestinations();
+  save(); closeModal(true); renderDestinations();
 }
 
 function openTempModal(preselectMasterId, tempId) {
@@ -2913,7 +2995,7 @@ function saveTemp(e, id) {
   } else {
     data.destinations.push({ id: uid('t'), createdAt: nowIso(), ...x });
   }
-  save(); closeModal(); renderDestinations();
+  save(); closeModal(true); renderDestinations();
 }
 function deleteTemp(id) {
   if (data.prs.some(p => p.destinationId === id)) {
@@ -2922,7 +3004,7 @@ function deleteTemp(id) {
   }
   if (!confirm('Delete this temp branch?')) return;
   data.destinations = data.destinations.filter(d => d.id !== id);
-  save(); closeModal(); renderDestinations();
+  save(); closeModal(true); renderDestinations();
 }
 
 
