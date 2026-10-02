@@ -1864,6 +1864,7 @@ function openBulkAddDestModal(issueId) {
   window._bulkAvail = available;
   window._bulkGroups = groups;
   window._bulkSelected = new Set();
+  window._bulkPrUrls = {};
   window._bulkExpanded = new Set();
   let body = renderBulkDestList(groups, '').html;
   openModal(`<div class="modal-head"><h2>Bulk add destinations</h2><button class="kebab" onclick="closeModal()">×</button></div>
@@ -1884,6 +1885,7 @@ function openBulkAddDestModal(issueId) {
       </div>
       <div id="bulkDestList" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px">${body}</div>
       <div id="bulkDestMeta" class="small" style="margin-top:6px"></div>
+      <div id="bulkPrLinks" class="bulk-pr-links"></div>
     </div>
     <div class="form-actions">
       <button type="button" class="btn" onclick="closeModal()">Cancel</button>
@@ -1892,6 +1894,23 @@ function openBulkAddDestModal(issueId) {
   </div>`);
   ssRenderList('bulkStatus');
   filterBulkDestList();
+}
+function renderBulkPrLinks() {
+  const container = document.getElementById('bulkPrLinks');
+  if (!container) return;
+  const selected = window._bulkSelected || new Set();
+  const urls = window._bulkPrUrls || (window._bulkPrUrls = {});
+  const destinations = window._bulkAvail || [];
+  const rows = [...selected].map(id => destinations.find(d => d.id === id)).filter(Boolean);
+  container.innerHTML = rows.length ? `<div class="bulk-pr-links-title">PR links</div>${rows.map(d => `
+    <label class="bulk-pr-link-row" for="bulkPrUrl-${esc(d.id)}">
+      <span dir="auto">${esc(destLabel(d))}</span>
+      <input dir="auto" type="url" id="bulkPrUrl-${esc(d.id)}" class="field" placeholder="https://..." value="${esc(urls[d.id] || '')}" oninput="bulkSetPrUrl('${esc(d.id)}', this.value)">
+    </label>`).join('')}` : '';
+}
+function bulkSetPrUrl(destinationId, url) {
+  const urls = window._bulkPrUrls || (window._bulkPrUrls = {});
+  urls[destinationId] = url;
 }
 function bulkRowSearchBlob(d) {
   return [destLabel(d), d.branch, d.name, d.company, d.kind, d.fromVersion].filter(Boolean).join(' ').toLowerCase();
@@ -1951,6 +1970,7 @@ function filterBulkDestList() {
   if (list) list.innerHTML = r.html;
   const meta = document.getElementById('bulkDestMeta');
   if (meta) meta.textContent = `${r.n} matching · ${(window._bulkSelected || new Set()).size} selected`;
+  renderBulkPrLinks();
 }
 function bulkCheckRow(d, indent, selected) {
   return `<label class="check bulk-row" style="display:flex;gap:8px;align-items:center;padding:4px 0 ${indent ? '0 0 0 18px' : '0'};cursor:pointer">
@@ -1970,6 +1990,7 @@ function bulkSetSelected(checkbox) {
   else selected.delete(checkbox.value);
   const meta = document.getElementById('bulkDestMeta');
   if (meta) meta.textContent = `${renderBulkDestList(window._bulkGroups || [], document.getElementById('bulkDestSearch')?.value || '').n} matching · ${selected.size} selected`;
+  renderBulkPrLinks();
 }
 function bulkToggleGroupExpanded(groupId) {
   const expanded = window._bulkExpanded || (window._bulkExpanded = new Set());
@@ -2000,7 +2021,7 @@ function commitBulkAddDest(issueId) {
   let n = 0;
   ids.forEach(did => {
     if (used.has(did)) return;
-    data.prs.push({ id: uid('p'), issueId, destinationId: did, status, prUrl: '', tags, notes: '', createdAt: ts, updatedAt: ts });
+    data.prs.push({ id: uid('p'), issueId, destinationId: did, status, prUrl: (window._bulkPrUrls || {})[did] || '', tags, notes: '', createdAt: ts, updatedAt: ts });
     used.add(did); n++;
   });
   const iss = issue(issueId); if (iss) iss.updatedAt = ts;

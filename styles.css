@@ -812,6 +812,31 @@ body.dark .prs-title {
 	font-weight: 700;
 	margin-bottom: 5px;
 }
+.bulk-pr-links:empty {
+	display: none;
+}
+.bulk-pr-links-title {
+	font-size: 12px;
+	font-weight: 700;
+	margin: 4px 0 6px;
+}
+.bulk-pr-link-row {
+	display: grid;
+	grid-template-columns: minmax(140px, 1fr) minmax(180px, 2fr);
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 7px;
+}
+.bulk-pr-link-row > span {
+	overflow-wrap: anywhere;
+	font-size: 12px;
+}
+@media (max-width: 520px) {
+	.bulk-pr-link-row {
+		grid-template-columns: 1fr;
+		gap: 4px;
+	}
+}
 .form-actions {
 	display: flex;
 	justify-content: flex-end;
