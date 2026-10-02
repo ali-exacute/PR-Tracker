@@ -2194,11 +2194,25 @@ function renderIssueViews() {
   }).join('') + (views.length ? '' : '<span class="muted" style="font-size:12px">No saved views — set filters, then “Save view”.</span>');
 }
 function saveCurrentIssueView() {
-  const name = prompt('Name for this view (filters):');
-  if (!name || !name.trim()) return;
+  openModal(`<div class="modal-head"><h2>Save issue view</h2><button class="kebab" onclick="closeModal()">×</button></div>
+  <form class="modal-body" onsubmit="commitIssueView(event)">
+    <div class="form-group"><label for="issueViewName">View name</label>
+      <input dir="auto" id="issueViewName" name="name" class="field" placeholder="e.g. Needs review" maxlength="60" required>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn success">Save view</button>
+    </div>
+  </form>`);
+}
+function commitIssueView(e) {
+  e.preventDefault();
+  const name = String(new FormData(e.target).get('name') || '').trim();
+  if (!name) return;
   if (!settings.savedViews) settings.savedViews = [];
-  settings.savedViews.push({ id: uid('v'), name: name.trim(), filters: getIssueFilterState() });
+  settings.savedViews.push({ id: uid('v'), name, filters: getIssueFilterState() });
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  closeModal(true);
   renderIssueViews();
 }
 function applySavedView(id) {
@@ -2325,7 +2339,7 @@ function renderIssues() {
   ssMountFilter('issuePrStatusFilter', 'issuePrStatus', statuses(), 'All PR status', () => renderIssues());
   ssMountFilter('issueCompanyFilter', 'issueCompany', companyNames(false), 'All companies', () => renderIssues());
   ssMountFilter('issueReportedVerFilter', 'issueReportedVer', versionNames(), 'All reported ver.', () => renderIssues());
-  const q = document.getElementById('issueSearch').value.toLowerCase();
+  const q = searchTerms(document.getElementById('issueSearch').value);
   const v = document.getElementById('issueVersion').value;
   const pv = document.getElementById('issuePriority').value;
   const ps = document.getElementById('issuePrStatus').value;
@@ -2336,7 +2350,12 @@ function renderIssues() {
   const attention = document.getElementById('issueAttention')?.value === '1';
   const arr = data.issues.filter(i => {
     const prs = data.prs.filter(p => p.issueId === i.id);
-    return (!q || [i.jira, i.description, i.notes, i.reportedBy || '', i.reportedVersion || ''].join(' ').toLowerCase().includes(q))
+    const prSearch = prs.flatMap(p => {
+      const d = dest(p.destinationId);
+      return d ? [destLabel(d), d.branch, d.company, d.kind, p.status, (p.tags || []).join(' '), p.notes || '', p.prUrl || ''] : [];
+    });
+    const searchBlob = [i.jira, i.description, i.notes, i.reportedBy || '', i.reportedVersion || '', ...prSearch].join(' ');
+    return matchesSearchTerms(searchBlob, q)
       && (!v || i.version === v) && (!pv || i.priority === pv)
       && (!ps || prs.some(p => p.status === ps))
       && (!imp || (i.tags || []).includes(imp))
