@@ -848,6 +848,14 @@ body.dark .prs-title {
 .bulk-pr-links:empty {
 	display: none;
 }
+.bulk-pr-links {
+	max-height: 200px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 10px;
+}
 .bulk-pr-links-title {
 	font-size: 12px;
 	font-weight: 700;

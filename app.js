@@ -1908,6 +1908,7 @@ function openBulkAddDestModal(issueId) {
     return;
   }
   window._bulkAvail = available;
+  window._bulkDestById = new Map(available.map(d => [d.id, d]));
   window._bulkGroups = groups;
   window._bulkSelected = new Set();
   window._bulkPrUrls = {};
@@ -1946,13 +1947,32 @@ function renderBulkPrLinks() {
   if (!container) return;
   const selected = window._bulkSelected || new Set();
   const urls = window._bulkPrUrls || (window._bulkPrUrls = {});
-  const destinations = window._bulkAvail || [];
-  const rows = [...selected].map(id => destinations.find(d => d.id === id)).filter(Boolean);
+  const destinations = window._bulkDestById || new Map();
+  const rows = [...selected].map(id => destinations.get(id)).filter(Boolean);
   container.innerHTML = rows.length ? `<div class="bulk-pr-links-title">PR links</div>${rows.map(d => `
     <label class="bulk-pr-link-row" for="bulkPrUrl-${esc(d.id)}">
       <span dir="auto">${esc(destLabel(d))}</span>
       <input dir="auto" type="url" id="bulkPrUrl-${esc(d.id)}" class="field" placeholder="https://..." value="${esc(urls[d.id] || '')}" oninput="bulkSetPrUrl('${esc(d.id)}', this.value)">
     </label>`).join('')}` : '';
+}
+function updateBulkPrLinkRow(destinationId, selected) {
+  const container = document.getElementById('bulkPrLinks');
+  if (!container) return;
+  const input = document.getElementById(`bulkPrUrl-${destinationId}`);
+  if (selected && !input) {
+    const destination = (window._bulkDestById || new Map()).get(destinationId);
+    if (!destination) return;
+    if (!container.querySelector('.bulk-pr-links-title')) {
+      container.innerHTML = '<div class="bulk-pr-links-title">PR links</div>';
+    }
+    container.insertAdjacentHTML('beforeend', `<label class="bulk-pr-link-row" for="bulkPrUrl-${esc(destination.id)}">
+      <span dir="auto">${esc(destLabel(destination))}</span>
+      <input dir="auto" type="url" id="bulkPrUrl-${esc(destination.id)}" class="field" placeholder="https://..." value="${esc((window._bulkPrUrls || {})[destination.id] || '')}" oninput="bulkSetPrUrl('${esc(destination.id)}', this.value)">
+    </label>`);
+  } else if (!selected && input) {
+    input.closest('.bulk-pr-link-row')?.remove();
+    if (!container.querySelector('.bulk-pr-link-row')) container.innerHTML = '';
+  }
 }
 function bulkSetPrUrl(destinationId, url) {
   const urls = window._bulkPrUrls || (window._bulkPrUrls = {});
@@ -2012,6 +2032,7 @@ function filterBulkDestList() {
   const q = document.getElementById('bulkDestSearch')?.value || '';
   const groups = window._bulkGroups || [];
   const r = renderBulkDestList(groups, q);
+  window._bulkMatchingCount = r.n;
   const list = document.getElementById('bulkDestList');
   if (list) list.innerHTML = r.html;
   const meta = document.getElementById('bulkDestMeta');
@@ -2035,8 +2056,8 @@ function bulkSetSelected(checkbox) {
   if (checkbox.checked) selected.add(checkbox.value);
   else selected.delete(checkbox.value);
   const meta = document.getElementById('bulkDestMeta');
-  if (meta) meta.textContent = `${renderBulkDestList(window._bulkGroups || [], document.getElementById('bulkDestSearch')?.value || '').n} matching · ${selected.size} selected`;
-  renderBulkPrLinks();
+  if (meta) meta.textContent = `${window._bulkMatchingCount || 0} matching · ${selected.size} selected`;
+  updateBulkPrLinkRow(checkbox.value, checkbox.checked);
 }
 function bulkToggleGroupExpanded(groupId) {
   const expanded = window._bulkExpanded || (window._bulkExpanded = new Set());
