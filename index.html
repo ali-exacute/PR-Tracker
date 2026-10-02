@@ -126,8 +126,7 @@
         <div class="topbar">
           <div>
             <h1>Versions</h1>
-            <div class="subtitle">Ordered product versions on issues. An issue on V14+ only lists destinations on the
-              V14+ line and later (not older lines).</div>
+            <div class="subtitle">Ordered product versions used for issue targets and destination compatibility.</div>
           </div>
           <div class="actions">
             <div class="version-create">
@@ -141,8 +140,7 @@
         </div>
         <div class="version-workspace">
           <div class="version-note">
-            Example: master <b>v14_master</b> with from-version <b>V14+</b> is available for issues on V14+, V15+, …
-            Company temps under that master (Temp_14_Saman, …) inherit the same compatibility.
+            Masters define their starting version. Temporary branches inherit the compatibility of their parent master.
           </div>
           <div id="versionList" class="catalog-list version-list"></div>
         </div>
@@ -167,6 +165,10 @@
           <button id="statusesTab" class="catalog-tab" type="button" role="tab" aria-selected="false"
             aria-controls="statusesCatalog" onclick="showCatalogList('statuses')">
             <span>PR statuses</span><span id="statusesCount" class="catalog-count">0</span>
+          </button>
+          <button id="prioritiesTab" class="catalog-tab" type="button" role="tab" aria-selected="false"
+            aria-controls="prioritiesCatalog" onclick="showCatalogList('priorities')">
+            <span>Priorities</span><span id="prioritiesCount" class="catalog-count">0</span>
           </button>
           <button id="tagsTab" class="catalog-tab" type="button" role="tab" aria-selected="false"
             aria-controls="tagsCatalog" onclick="showCatalogList('tags')">
@@ -197,7 +199,7 @@
             <div class="catalog-panel-head">
               <div>
                 <h2>PR statuses</h2>
-                <p>Displayed in this order. Used statuses can’t be removed.</p>
+                <p>Choose the new-PR default, completion behavior, and summary counts. Used statuses can’t be removed.</p>
               </div>
               <div class="actions catalog-add">
                 <input dir="auto" id="newStatusName" class="field" placeholder="Add a status"
@@ -206,6 +208,20 @@
               </div>
             </div>
             <div id="statusList" class="catalog-list"></div>
+          </section>
+          <section id="prioritiesCatalog" class="catalog-panel hidden" data-list-panel="priorities" role="tabpanel" aria-labelledby="prioritiesTab" hidden>
+            <div class="catalog-panel-head">
+              <div>
+                <h2>Priorities</h2>
+                <p>Choose the new-issue default and which priorities need immediate attention.</p>
+              </div>
+              <div class="actions catalog-add">
+                <input dir="auto" id="newPriorityName" class="field" placeholder="Add a priority"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();addPriority()}">
+                <button class="btn primary" aria-label="Add priority" title="Add priority" onclick="addPriority()">+</button>
+              </div>
+            </div>
+            <div id="priorityList" class="catalog-list"></div>
           </section>
           <section id="tagsCatalog" class="catalog-panel hidden" data-list-panel="tags" role="tabpanel" aria-labelledby="tagsTab" hidden>
             <div class="catalog-panel-head">
@@ -229,13 +245,13 @@
         <div class="topbar">
           <div>
             <h1>Settings</h1>
-            <div class="subtitle">Backup and appearance.</div>
+            <div class="subtitle">Workflow defaults, integrations, backup, and appearance.</div>
           </div>
         </div>
         <div class="card section-card">
           <h2 class="section-title">Local JSON backup</h2>
           <div class="subtitle section-copy">
-            Always saves as <code>pr-tracker-data.json</code> (same name, overwritten). Live data also stays in this
+            Always saves as <code id="backupFilenameNote">pr-tracker-data.json</code> (same name, overwritten). Live data also stays in this
             browser (localStorage).
           </div>
           <div id="backupModeNote" class="small info-box"></div>
@@ -249,15 +265,15 @@
                 backup</label>
             </div>
             <div class="form-group">
-              <label>Backup interval</label>
-              <select id="backupInterval" class="field" onchange="saveSettings()">
-                <option value="15">Every 15 minutes</option>
-                <option value="30">Every 30 minutes</option>
-                <option value="60">Every hour</option>
-                <option value="240">Every 4 hours</option>
-                <option value="1440">Once a day</option>
-              </select>
+              <label for="backupInterval">Backup interval (minutes)</label>
+              <input id="backupInterval" class="field" type="number" min="1" step="1" onchange="saveSettings()">
             </div>
+          </div>
+          <div class="form-group">
+            <label for="backupFilename">Backup filename</label>
+            <input dir="auto" id="backupFilename" class="field" placeholder="pr-tracker-data.json"
+              onchange="saveSettings()" onblur="saveSettings()">
+            <div class="small" style="margin-top:4px">The <code>.json</code> extension is added when omitted.</div>
           </div>
           <div class="actions">
             <button class="btn" onclick="backupNow()">Backup now</button>
@@ -353,13 +369,37 @@
         </div>
         <div class="card section-card">
           <h2 class="section-title">Branch name maintenance</h2>
-          <div class="subtitle" style="margin-bottom:12px">
-            Temp branches should follow <code>Temp_&lt;ver&gt;_&lt;Company&gt;</code> (capital T). Masters are left
-            unchanged.
+          <div class="form-group">
+            <label>New temp branch name template</label>
+            <input dir="auto" id="tempBranchTemplate" class="field" placeholder="Temp_{ver}_{company}"
+              onchange="saveSettings()" onblur="saveSettings()">
+            <div class="small" style="margin-top:4px">Placeholders: <code>{ver}</code> and <code>{company}</code>. Used for suggestions and re-evaluation.</div>
           </div>
           <button type="button" class="btn primary" onclick="reevaluateTempBranchNames()">Re-evaluate all temp branch
             names</button>
           <div id="reevalStatus" class="small soft-copy status-inline"></div>
+        </div>
+        <div class="card section-card">
+          <h2 class="section-title">Needs attention</h2>
+          <div class="grid2">
+            <div class="form-group">
+              <label for="attentionAgeDays">Mark open PRs stale after (days)</label>
+              <input id="attentionAgeDays" class="field" type="number" min="1" step="1" onchange="saveSettings()" onblur="saveSettings()">
+            </div>
+            <div class="form-group">
+              <label><input id="needsAttentionWithoutPr" type="checkbox" onchange="saveSettings()"> Issues with no PRs need attention</label>
+            </div>
+          </div>
+        </div>
+        <div class="card section-card">
+          <h2 class="section-title">Destination compatibility</h2>
+          <div class="form-group">
+            <label for="destinationCompatibility">Destinations available to an issue</label>
+            <select id="destinationCompatibility" class="field" onchange="saveSettings()">
+              <option value="from">This version and later versions</option>
+              <option value="exact">This version only</option>
+            </select>
+          </div>
         </div>
         <div class="card section-card">
           <h2 class="section-title">Azure DevOps / TFS repo</h2>

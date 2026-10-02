@@ -29,6 +29,11 @@ let settings = Object.assign({
   azureRepoUrl: '',
   azureMasterPath: 'masters/{branch}',
   azureTempPath: 'master_dev/Temp/v{ver}/{branch}',
+  tempBranchTemplate: 'Temp_{ver}_{company}',
+  attentionAgeDays: 14,
+  needsAttentionWithoutPr: true,
+  destinationCompatibility: 'from',
+  backupFilename: 'pr-tracker-data.json',
   azureSimpleBranches: 'developer',
   savedViews: [],
   cloudGistId: '',
@@ -41,11 +46,18 @@ let backupTimer = null;
 
 
 
-const PRIORITIES = ['Critical', 'High', 'Normal', 'Low'];
+const DEFAULT_PRIORITIES = ['Critical', 'High', 'Normal', 'Low'];
 const DEFAULT_VERSIONS = ['V11+', 'V12+', 'V14+', 'V15+'];
 const DEFAULT_TAGS = ['Important', 'Backend', 'Testing'];
-const DEFAULT_STATUSES = ['TODO', 'PR Only', "PR'd", 'Rejected', 'Not Required'];
+const DEFAULT_STATUSES = ['TODO', 'PR Only', "PR'd", "PR'd and Done", 'Rejected', 'Not Required'];
 const BACKUP_FILENAME = 'pr-tracker-data.json';
+
+function backupFilename() {
+  const entered = String(settings.backupFilename || BACKUP_FILENAME).trim();
+  const basename = entered.split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, '_');
+  if (!basename) return BACKUP_FILENAME;
+  return basename.toLowerCase().endsWith('.json') ? basename : basename + '.json';
+}
 
 function readStoredJSON(key, fallback = null) {
   try {
@@ -66,20 +78,50 @@ function itemName(x) { return x == null ? '' : (typeof x === 'string' ? x : Stri
 function itemColor(x) { return (x && typeof x === 'object' && x.color) ? x.color : ''; }
 function toNamedItems(arr) {
   return (arr || []).map(x => {
-    if (x && typeof x === 'object' && x.name != null) return { name: String(x.name).trim(), color: x.color || '', active: x.active };
+    if (x && typeof x === 'object' && x.name != null) {
+      const item = { name: String(x.name).trim(), color: x.color || '', active: x.active };
+      ['isDefault', 'isTerminal', 'showInStats', 'isNeedsAction', 'isImportant', 'isUrgent'].forEach(key => {
+        if (typeof x[key] === 'boolean') item[key] = x[key];
+      });
+      return item;
+    }
     const n = String(x || '').trim();
     return n ? { name: n, color: '' } : null;
   }).filter(Boolean);
 }
 function versionNames() { return (data.versions || []).map(itemName); }
 function statusNames() { return (data.statuses && data.statuses.length ? data.statuses : DEFAULT_STATUSES.map(s => ({ name: s }))).map(itemName); }
+function priorityNames() { return (data.priorities || []).map(itemName); }
+function defaultVersionName() {
+  const versions = data.versions || [];
+  return itemName(versions.find(v => v && typeof v === 'object' && v.isDefault))
+    || versionNames()[0]
+    || '';
+}
+function defaultPriorityName() {
+  return itemName((data.priorities || []).find(p => p && typeof p === 'object' && p.isDefault))
+    || priorityNames()[0]
+    || '';
+}
+function defaultStatusName() {
+  const names = statusNames();
+  return itemName((data.statuses || []).find(s => s && typeof s === 'object' && s.isDefault))
+    || names[0]
+    || '';
+}
 function tagNames() { return (data.tagsCatalog || []).map(itemName); }
+function importantTagName() {
+  return itemName((data.tagsCatalog || []).find(t => t && typeof t === 'object' && t.isImportant))
+    || tagNames()[0]
+    || '';
+}
 function companyNames(activeOnly) {
   return (data.companies || []).filter(c => !activeOnly || c.active !== false).map(c => c.name);
 }
 function companyObj(name) { return (data.companies || []).find(c => c.name === name); }
 function versionObj(name) { return (data.versions || []).find(v => itemName(v) === name); }
 function statusObj(name) { return (data.statuses || []).find(s => itemName(s) === name); }
+function priorityObj(name) { return (data.priorities || []).find(p => itemName(p) === name); }
 function tagObj(name) { return (data.tagsCatalog || []).find(t => itemName(t) === name); }
 
 function contrastText(hex) {
@@ -122,7 +164,8 @@ function suggestTempNames(parent, company) {
   const m = String((parent && (parent.branch || parent.name)) || '').match(/(\d+)/);
   const num = m ? m[1] : 'x';
   const companySlug = String(company || '').replace(/\s+/g, '_');
-  const branch = `Temp_${num}_${companySlug}`;
+  const template = settings.tempBranchTemplate || 'Temp_{ver}_{company}';
+  const branch = template.split('{ver}').join(num).split('{company}').join(companySlug);
   return { branch, name: branch };
 }
 
@@ -142,6 +185,15 @@ function renameStatus(oldName, newName) {
   if (statusNames().includes(newName)) { alert('Status already exists.'); return false; }
   const obj = statusObj(oldName); if (obj) obj.name = newName;
   data.prs.forEach(p => { if (p.status === oldName) p.status = newName; });
+  return true;
+}
+function renamePriority(oldName, newName) {
+  newName = newName.trim();
+  if (!newName || newName === oldName) return false;
+  if (priorityNames().includes(newName)) { alert('Priority already exists.'); return false; }
+  const item = data.priorities.find(p => itemName(p) === oldName);
+  if (item) item.name = newName;
+  data.issues.forEach(i => { if (i.priority === oldName) i.priority = newName; });
   return true;
 }
 function renameTag(oldName, newName) {
@@ -180,6 +232,10 @@ function migrateData(raw) {
   } else {
     raw.versions = toNamedItems(raw.versions);
   }
+  const defaultVersion = raw.versions.find(v => v.isDefault)
+    || raw.versions.find(v => itemName(v) === 'V14+')
+    || raw.versions[0];
+  raw.versions.forEach(v => { v.isDefault = v === defaultVersion; });
 
   // Old destinations.versions[] → fromVersion
   const verNames = (raw.versions || []).map(v => (v && v.name != null) ? v.name : String(v || ''));
@@ -204,7 +260,7 @@ function migrateData(raw) {
       d.kind = 'master';
       d.company = null;
       d.parentId = null;
-      if (!d.fromVersion) d.fromVersion = (raw.versions[0] && (raw.versions[0].name || raw.versions[0])) || 'V14+';
+      if (!d.fromVersion) d.fromVersion = itemName(raw.versions.find(v => v.isDefault)) || itemName(raw.versions[0]);
     } else {
       d.kind = 'temp';
       d.company = company;
@@ -232,13 +288,39 @@ function migrateData(raw) {
   asObjects.sort((a, b) => a.name.localeCompare(b.name));
   raw.companies = asObjects;
 
+  const seedDefaultTags = !Array.isArray(raw.tagsCatalog);
   const existingTags = toNamedItems(raw.tagsCatalog || []);
   const tagMap = new Map(existingTags.map(t => [t.name, t]));
-  [...DEFAULT_TAGS, ...tagsI, ...tagsP].forEach(n => {
+  [...(seedDefaultTags ? DEFAULT_TAGS : []), ...tagsI, ...tagsP].forEach(n => {
     n = String(n || '').trim();
     if (n && !tagMap.has(n)) tagMap.set(n, { name: n, color: '' });
   });
   raw.tagsCatalog = [...tagMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const importantTag = raw.tagsCatalog.find(t => t.isImportant)
+    || raw.tagsCatalog.find(t => t.name === 'Important');
+  raw.tagsCatalog.forEach(t => { t.isImportant = t === importantTag; });
+
+  let priorities = toNamedItems(raw.priorities || []);
+  if (!priorities.length) {
+    priorities = DEFAULT_PRIORITIES.map(name => ({
+      name,
+      color: '',
+      isDefault: name === 'Normal',
+      isUrgent: name === 'Critical' || name === 'High'
+    }));
+  }
+  (raw.issues || []).forEach(i => {
+    const name = String(i.priority || '').trim();
+    if (name && !priorities.some(p => p.name === name)) priorities.push({ name, color: '' });
+  });
+  const defaultPriority = priorities.find(p => p.isDefault)
+    || priorities.find(p => p.name === 'Normal')
+    || priorities[0];
+  priorities.forEach(p => {
+    p.isDefault = p === defaultPriority;
+    if (typeof p.isUrgent !== 'boolean') p.isUrgent = p.name === 'Critical' || p.name === 'High';
+  });
+  raw.priorities = priorities;
 
   const statusFromPrs = (raw.prs || []).map(p => p.status).filter(Boolean);
   let statuses = toNamedItems(raw.statuses || []);
@@ -251,6 +333,19 @@ function migrateData(raw) {
       if (!statuses.some(x => x.name === s)) statuses.push({ name: s, color: '' });
     });
   }
+  if (!statuses.some(s => s.isDefault) && !statuses.some(s => s.name === "PR'd and Done")) {
+    statuses.push({ name: "PR'd and Done", color: '' });
+  }
+  const defaultStatus = statuses.find(s => s.isDefault)
+    || statuses.find(s => s.name === "PR'd and Done")
+    || statuses.find(s => s.name === 'TODO')
+    || statuses[0];
+  statuses.forEach(s => {
+    s.isDefault = s === defaultStatus;
+    if (typeof s.isTerminal !== 'boolean') s.isTerminal = ["PR'd", "PR'd and Done", 'Rejected', 'Not Required'].includes(s.name);
+    if (typeof s.showInStats !== 'boolean') s.showInStats = ['TODO', 'PR Only', "PR'd"].includes(s.name);
+    if (typeof s.isNeedsAction !== 'boolean') s.isNeedsAction = s.name === 'TODO';
+  });
   raw.statuses = statuses;
 
   // companies already objects; ensure color field
@@ -275,6 +370,7 @@ if (!data) {
     companies: [{ name: 'Saman', active: true, color: '' }, { name: 'Mellat', active: true, color: '' }, { name: 'Razi', active: true, color: '' }, { name: 'Parsian', active: true, color: '' }, { name: 'Asia', active: true, color: '' }],
     tagsCatalog: DEFAULT_TAGS.map(n => ({ name: n, color: '' })),
     statuses: DEFAULT_STATUSES.map(n => ({ name: n, color: '' })),
+    priorities: [],
     issues: [
       { id: 'i1', jira: 'ABC-123', link: '', description: 'Fix calculation issue', version: 'V14+', priority: 'High', tags: ['Important'], notes: 'Example issue.', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       { id: 'i2', jira: 'ABC-456', link: '', description: 'Update policy validation', version: 'V15+', priority: 'Normal', tags: [], notes: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
@@ -303,6 +399,7 @@ if (!data) {
     if (!Array.isArray(data.versions)) data.versions = DEFAULT_VERSIONS.map(n => ({ name: n, color: '' }));
     if (!Array.isArray(data.companies)) data.companies = [];
     if (!Array.isArray(data.statuses)) data.statuses = DEFAULT_STATUSES.map(n => ({ name: n, color: '' }));
+    if (!Array.isArray(data.priorities)) data.priorities = [];
     if (!Array.isArray(data.tagsCatalog)) data.tagsCatalog = DEFAULT_TAGS.map(n => ({ name: n, color: '' }));
     if (!Array.isArray(data.issues)) data.issues = [];
     if (!Array.isArray(data.destinations)) data.destinations = [];
@@ -327,13 +424,23 @@ function save() {
 function saveSettings() {
   const en = document.getElementById('autoBackupEnabled'), bi = document.getElementById('backupInterval');
   if (en) settings.autoBackup = !!en.checked;
-  if (bi) settings.backupMinutes = Number(bi.value) || 60;
+  if (bi) settings.backupMinutes = Math.max(1, Math.floor(Number(bi.value) || 60));
   const val = id => { const el = document.getElementById(id); return el ? (el.value || '').trim() : undefined; };
   const j = val('jiraBaseUrl'); if (j !== undefined) settings.jiraBaseUrl = j;
   const a = val('azureRepoUrl'); if (a !== undefined) settings.azureRepoUrl = a;
   const mp = val('azureMasterPath'); if (mp !== undefined) settings.azureMasterPath = mp || 'masters/{branch}';
   const tp = val('azureTempPath'); if (tp !== undefined) settings.azureTempPath = tp || 'master_dev/Temp/v{ver}/{branch}';
+  const tn = val('tempBranchTemplate'); if (tn !== undefined) settings.tempBranchTemplate = tn || 'Temp_{ver}_{company}';
+  const days = document.getElementById('attentionAgeDays');
+  if (days && Number.isFinite(Number(days.value))) settings.attentionAgeDays = Math.max(1, Math.floor(Number(days.value)));
   const sb = val('azureSimpleBranches'); if (sb !== undefined) settings.azureSimpleBranches = sb;
+  const noPrAttention = document.getElementById('needsAttentionWithoutPr');
+  if (noPrAttention) settings.needsAttentionWithoutPr = !!noPrAttention.checked;
+  const compatibility = document.getElementById('destinationCompatibility');
+  if (compatibility) settings.destinationCompatibility = compatibility.value === 'exact' ? 'exact' : 'from';
+  const backupName = val('backupFilename'); if (backupName !== undefined) settings.backupFilename = backupName || BACKUP_FILENAME;
+  const backupFilenameNote = document.getElementById('backupFilenameNote');
+  if (backupFilenameNote) backupFilenameNote.textContent = backupFilename();
   const gid = val('cloudGistId'); if (gid !== undefined) settings.cloudGistId = gid;
   const cas = document.getElementById('cloudAutoSync'); if (cas) settings.cloudAutoSync = !!cas.checked;
   const clr = document.getElementById('cloudRemember'); if (clr) settings.cloudRemember = !!clr.checked;
@@ -341,7 +448,7 @@ function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   if (settings.cloudRemember === false) clearSavedCloudCreds();
   stopCloudLiveSync();
-  scheduleAutoBackup(); updateBackupInfo(); updateCloudSyncUI();
+  scheduleAutoBackup(); updateBackupInfo(); updateBackupFolderLabel(); updateCloudSyncUI();
 }
 function toggleDarkMode(on) { settings.darkMode = !!on; localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); applyTheme(); }
 function applyTheme() { document.body.classList.toggle('dark', !!settings.darkMode); const x = document.getElementById('darkMode'); if (x) x.checked = !!settings.darkMode; }
@@ -443,12 +550,12 @@ function updateBackupFolderLabel() {
   if (note) {
     if (isFileProtocol() || !canUseFileSystemAccess()) {
       note.innerHTML = `<b>Opened as a local file (<code>file://</code>)</b> — the browser blocks writing into folders from this context.<br><br>
-        <b>What still works:</b> “Backup now” saves <code>${BACKUP_FILENAME}</code> via the browser save/download dialog (same filename every time; choose the HTML folder and overwrite when asked).<br><br>
+        <b>What still works:</b> “Backup now” saves <code>${esc(backupFilename())}</code> via the browser save/download dialog (same filename every time; choose the HTML folder and overwrite when asked).<br><br>
         <b>Silent overwrite next to the HTML</b> needs a secure context. Easiest offline option if Python exists on the PC:<br>
         <code class="backup-command">cd folder-with-html<br>python -m http.server 8765</code>
         Then open <code>http://localhost:8765/pr-tracker.html</code> and use “Choose backup folder…”.`;
     } else {
-      note.innerHTML = `Secure context detected. Link a folder once; backups will silently overwrite <code>${BACKUP_FILENAME}</code> there.`;
+      note.innerHTML = `Secure context detected. Link a folder once; backups will silently overwrite <code>${esc(backupFilename())}</code> there.`;
     }
   }
 
@@ -458,9 +565,9 @@ function updateBackupFolderLabel() {
 
   if (!el) return;
   if (backupDirHandle) {
-    el.textContent = 'Folder linked — backups overwrite ' + BACKUP_FILENAME + ' in that folder.';
+    el.textContent = 'Folder linked — backups overwrite ' + backupFilename() + ' in that folder.';
   } else if (backupFileHandle) {
-    el.textContent = 'File linked — backups overwrite the chosen ' + BACKUP_FILENAME + '.';
+    el.textContent = 'File linked — backups overwrite the chosen ' + backupFilename() + '.';
   } else if (canUseFileSystemAccess() && !isFileProtocol()) {
     el.textContent = 'No folder linked yet. Choose the folder that contains this HTML file.';
   } else {
@@ -474,7 +581,7 @@ async function linkBackupFolder() {
     return;
   }
   if (isFileProtocol()) {
-    alert('Browsers block folder access on file:// pages.\n\nOpen this app via http://localhost (see Settings note), or use Backup now which opens a save dialog for ' + BACKUP_FILENAME + '.');
+    alert('Browsers block folder access on file:// pages.\n\nOpen this app via http://localhost (see Settings note), or use Backup now which opens a save dialog for ' + backupFilename() + '.');
     return;
   }
   try {
@@ -494,7 +601,7 @@ async function linkBackupFolder() {
   try {
     if (window.showSaveFilePicker) {
       const fh = await window.showSaveFilePicker({
-        suggestedName: BACKUP_FILENAME,
+        suggestedName: backupFilename(),
         types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
       });
       backupFileHandle = fh;
@@ -527,7 +634,7 @@ function writeViaDownload(jsonText) {
   const blob = new Blob([jsonText], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = BACKUP_FILENAME;
+  a.download = backupFilename();
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1500);
 }
@@ -546,7 +653,7 @@ async function backupNow(auto) {
   // 1) Directory handle
   if (backupDirHandle && await ensureHandlePermission(backupDirHandle)) {
     try {
-      const fileHandle = await backupDirHandle.getFileHandle(BACKUP_FILENAME, { create: true });
+      const fileHandle = await backupDirHandle.getFileHandle(backupFilename(), { create: true });
       await writeViaHandle(fileHandle, jsonText);
       recordBackup(auto);
       return;
@@ -566,7 +673,7 @@ async function backupNow(auto) {
   if (!auto && canUseFileSystemAccess() && window.showSaveFilePicker && !isFileProtocol()) {
     try {
       const fh = await window.showSaveFilePicker({
-        suggestedName: BACKUP_FILENAME,
+        suggestedName: backupFilename(),
         types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
       });
       backupFileHandle = fh;
@@ -612,7 +719,16 @@ function renderSettings() {
   set('azureRepoUrl', settings.azureRepoUrl);
   set('azureMasterPath', settings.azureMasterPath || 'masters/{branch}');
   set('azureTempPath', settings.azureTempPath || 'master_dev/Temp/v{ver}/{branch}');
+  set('tempBranchTemplate', settings.tempBranchTemplate || 'Temp_{ver}_{company}');
+  set('attentionAgeDays', String(settings.attentionAgeDays || 14));
+  set('backupFilename', settings.backupFilename || BACKUP_FILENAME);
+  const backupFilenameNote = document.getElementById('backupFilenameNote');
+  if (backupFilenameNote) backupFilenameNote.textContent = backupFilename();
   set('azureSimpleBranches', settings.azureSimpleBranches || 'developer');
+  const noPrAttention = document.getElementById('needsAttentionWithoutPr');
+  if (noPrAttention) noPrAttention.checked = settings.needsAttentionWithoutPr !== false;
+  const compatibility = document.getElementById('destinationCompatibility');
+  if (compatibility) compatibility.value = settings.destinationCompatibility === 'exact' ? 'exact' : 'from';
   set('cloudGistId', settings.cloudGistId || '');
   const cas = document.getElementById('cloudAutoSync'); if (cas) cas.checked = settings.cloudAutoSync !== false;
   const clr = document.getElementById('cloudRemember'); if (clr) clr.checked = settings.cloudRemember !== false;
@@ -831,8 +947,12 @@ function compatible(issueObj, d) {
   const iIdx = versionIndex(issueObj.version);
   const dIdx = versionIndex(fv);
   if (iIdx === -1 || dIdx === -1) return false;
-  // Issue on V14+ only sees version lines V14+ and later (not V11/V12).
-  return dIdx >= iIdx;
+  return settings.destinationCompatibility === 'exact' ? dIdx === iIdx : dIdx >= iIdx;
+}
+function destinationCompatibilityDescription() {
+  return settings.destinationCompatibility === 'exact'
+    ? 'Only destinations on the exact same version line are available.'
+    : 'Destinations on this version line and later version lines are available.';
 }
 function fromVersionLabel(fv) {
   if (!fv) return '—';
@@ -1081,11 +1201,9 @@ document.addEventListener('click', function (e) {
 function renderStats() {
   const counts = Object.fromEntries(statuses().map(s => [s, 0]));
   data.prs.forEach(p => counts[p.status] = (counts[p.status] || 0) + 1);
-  document.getElementById('stats').innerHTML = `
-    <div class="stat"><div class="n">${data.issues.length}</div><div class="l">Issues</div></div>
-    <div class="stat"><div class="n">${counts['TODO'] || 0}</div><div class="l">TODO PRs</div></div>
-    <div class="stat"><div class="n">${counts['PR Only'] || 0}</div><div class="l">PR Only</div></div>
-    <div class="stat"><div class="n">${counts["PR'd"] || 0}</div><div class="l">PR'd</div></div>`;
+  const statStatuses = (data.statuses || []).filter(s => s.showInStats);
+  document.getElementById('stats').innerHTML = `<div class="stat"><div class="n">${data.issues.length}</div><div class="l">Issues</div></div>`
+    + statStatuses.map(s => `<div class="stat"><div class="n">${counts[itemName(s)] || 0}</div><div class="l">${esc(itemName(s))}</div></div>`).join('');
 }
 function getExpanded(id) {
   const state = readStoredJSON('pr-tracker-expanded-v1', {});
@@ -1137,6 +1255,9 @@ function renderVersionList() {
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitVersionName(${idx}, this)">
       <div class="row-controls">
+        <label class="catalog-option" title="Use for new issues and masters">
+          <input type="radio" name="defaultVersion" aria-label="Default version" ${defaultVersionName() === name ? 'checked' : ''} onchange="setDefaultVersion(${idx})"> Default
+        </label>
         <div class="order-btns">
           <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveVersion(${idx},-1)">↑</button>
           <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === data.versions.length - 1 ? 'disabled' : ''} onclick="moveVersion(${idx},1)">↓</button>
@@ -1150,6 +1271,11 @@ function setVersionColor(idx, color) {
   if (!data.versions[idx]) return;
   if (typeof data.versions[idx] === 'string') data.versions[idx] = { name: data.versions[idx], color: '' };
   data.versions[idx].color = color || '';
+  save(); renderVersionList();
+}
+function setDefaultVersion(idx) {
+  if (!data.versions[idx]) return;
+  data.versions.forEach((version, versionIdx) => { version.isDefault = versionIdx === idx; });
   save(); renderVersionList();
 }
 function commitVersionName(idx, input) {
@@ -1174,11 +1300,15 @@ function moveVersion(idx, dir) {
 }
 function deleteVersion(idx) {
   const v = itemName(data.versions[idx]);
+  if (data.versions.length === 1) { alert('At least one version must remain.'); return; }
   if (data.issues.some(i => i.version === v) || data.destinations.some(d => d.kind === 'master' && d.fromVersion === v)) {
     alert('Cannot delete: used by issues or masters.'); return;
   }
   if (!confirm('Delete "' + v + '"?')) return;
-  data.versions.splice(idx, 1); save(); renderVersionList();
+  const removedDefault = !!data.versions[idx].isDefault;
+  data.versions.splice(idx, 1);
+  if (removedDefault && data.versions.length) data.versions.forEach((version, versionIdx) => { version.isDefault = versionIdx === 0; });
+  save(); renderVersionList();
 }
 
 /* ── Lists ── */
@@ -1187,6 +1317,7 @@ let activeCatalogList = 'companies';
 function renderLists() {
   renderCompanyList();
   renderStatusList();
+  renderPriorityList();
   renderTagList();
   showCatalogList(activeCatalogList, false);
 }
@@ -1194,6 +1325,7 @@ function updateCatalogCounts() {
   const counts = {
     companies: document.querySelectorAll('#companyList .catalog-row').length,
     statuses: document.querySelectorAll('#statusList .catalog-row').length,
+    priorities: document.querySelectorAll('#priorityList .catalog-row').length,
     tags: document.querySelectorAll('#tagCatalogList .catalog-row').length
   };
   Object.entries(counts).forEach(([name, count]) => {
@@ -1202,7 +1334,7 @@ function updateCatalogCounts() {
   });
 }
 function showCatalogList(name, resetSearch = true) {
-  if (!['companies', 'statuses', 'tags'].includes(name)) return;
+  if (!['companies', 'statuses', 'priorities', 'tags'].includes(name)) return;
   activeCatalogList = name;
   document.querySelectorAll('.catalog-tab').forEach(tab => {
     const active = tab.id === name + 'Tab';
@@ -1267,6 +1399,18 @@ function renderStatusList() {
           <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="moveStatus(${idx},-1)">↑</button>
           <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === list.length - 1 ? 'disabled' : ''} onclick="moveStatus(${idx},1)">↓</button>
         </div>
+        <label class="catalog-option" title="Use for new PRs">
+          <input type="radio" name="defaultStatus" aria-label="Default PR status" ${defaultStatusName() === name ? 'checked' : ''} onchange="setDefaultStatus(${idx})"> Default
+        </label>
+        <label class="catalog-option" title="Treat this status as complete for Needs attention">
+          <input type="checkbox" aria-label="${esc(name)} is terminal" ${s.isTerminal ? 'checked' : ''} onchange="setStatusFlag(${idx}, 'isTerminal', this.checked)"> Complete
+        </label>
+        <label class="catalog-option" title="Include this status in the Issues summary">
+          <input type="checkbox" aria-label="Show ${esc(name)} in summary" ${s.showInStats ? 'checked' : ''} onchange="setStatusFlag(${idx}, 'showInStats', this.checked)"> Summary
+        </label>
+        <label class="catalog-option" title="Highlight this status as needing action">
+          <input type="checkbox" aria-label="${esc(name)} needs action" ${s.isNeedsAction ? 'checked' : ''} onchange="setStatusFlag(${idx}, 'isNeedsAction', this.checked)"> Needs action
+        </label>
         <button class="btn danger icon" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeStatus(${idx})">×</button>
       </div>
     </div>`;
@@ -1277,6 +1421,16 @@ function setStatusColor(idx, color) {
   if (!data.statuses[idx]) return;
   if (typeof data.statuses[idx] === 'string') data.statuses[idx] = { name: data.statuses[idx], color: '' };
   data.statuses[idx].color = color || '';
+  save(); renderStatusList();
+}
+function setDefaultStatus(idx) {
+  if (!data.statuses[idx]) return;
+  data.statuses.forEach((status, statusIdx) => { status.isDefault = statusIdx === idx; });
+  save(); renderStatusList();
+}
+function setStatusFlag(idx, flag, value) {
+  if (!data.statuses[idx]) return;
+  data.statuses[idx][flag] = !!value;
   save(); renderStatusList();
 }
 function commitStatusName(idx, input) {
@@ -1302,9 +1456,90 @@ function moveStatus(idx, dir) {
 }
 function removeStatus(idx) {
   const name = itemName(data.statuses[idx]);
+  if (data.statuses.length === 1) { alert('At least one status must remain.'); return; }
   if (data.prs.some(p => p.status === name)) { alert('Status is used by PR records.'); return }
   if (!confirm('Remove status "' + name + '"?')) return;
-  data.statuses.splice(idx, 1); save(); renderStatusList();
+  const removedDefault = !!data.statuses[idx].isDefault;
+  data.statuses.splice(idx, 1);
+  if (removedDefault && data.statuses.length) {
+    const replacement = data.statuses.find(s => itemName(s) === 'TODO') || data.statuses[0];
+    data.statuses.forEach(s => { s.isDefault = s === replacement; });
+  }
+  save(); renderStatusList();
+}
+
+function renderPriorityList() {
+  const el = document.getElementById('priorityList'); if (!el) return;
+  const list = data.priorities || [];
+  el.innerHTML = list.map((priority, idx) => {
+    const name = itemName(priority);
+    const used = data.issues.some(i => i.priority === name);
+    return `<div class="catalog-row catalog-row--status">
+      <span class="chip" style="min-width:28px;justify-content:center">${idx + 1}</span>
+      ${listRowColorControls(itemColor(priority), `setPriorityColor(${idx}, this.value)`, `setPriorityColor(${idx},'')`)}
+      <input dir="auto" class="name-edit field" style="flex:1;font-weight:650" value="${esc(name)}"
+        data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}" onblur="commitPriorityName(${idx}, this)">
+      <div class="row-controls">
+        <label class="catalog-option" title="Use for new issues"><input type="radio" name="defaultPriority" aria-label="Default priority" ${defaultPriorityName() === name ? 'checked' : ''} onchange="setDefaultPriority(${idx})"> Default</label>
+        <label class="catalog-option" title="This priority triggers immediate attention"><input type="checkbox" aria-label="${esc(name)} is urgent" ${priority.isUrgent ? 'checked' : ''} onchange="setPriorityUrgent(${idx}, this.checked)"> Urgent</label>
+        <div class="order-btns">
+          <button class="btn icon" title="Move up" aria-label="Move ${esc(name)} up" ${idx === 0 ? 'disabled' : ''} onclick="movePriority(${idx},-1)">↑</button>
+          <button class="btn icon" title="Move down" aria-label="Move ${esc(name)} down" ${idx === list.length - 1 ? 'disabled' : ''} onclick="movePriority(${idx},1)">↓</button>
+        </div>
+        <button class="btn danger icon" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removePriority(${idx})">×</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="catalog-empty">No priorities yet. Add the first one above.</div>';
+  updateCatalogCounts(); filterCatalogRows();
+}
+function setPriorityColor(idx, color) {
+  if (!data.priorities[idx]) return;
+  data.priorities[idx].color = color || '';
+  save(); renderPriorityList();
+}
+function setDefaultPriority(idx) {
+  if (!data.priorities[idx]) return;
+  data.priorities.forEach((priority, priorityIdx) => { priority.isDefault = priorityIdx === idx; });
+  save(); renderPriorityList();
+}
+function setPriorityUrgent(idx, value) {
+  if (!data.priorities[idx]) return;
+  data.priorities[idx].isUrgent = !!value;
+  save(); renderPriorityList();
+}
+function commitPriorityName(idx, input) {
+  const oldName = input.dataset.old, newName = input.value.trim();
+  if (!newName) { input.value = oldName; return; }
+  if (newName === oldName) return;
+  if (renamePriority(oldName, newName)) { save(); renderPriorityList(); }
+  else input.value = oldName;
+}
+function addPriority() {
+  const input = document.getElementById('newPriorityName');
+  const name = (input?.value || '').trim();
+  if (!name) { alert('Enter a priority name.'); return; }
+  if (priorityNames().includes(name)) { alert('Already exists.'); return; }
+  data.priorities.push({ name, color: '', isUrgent: false });
+  save(); if (input) input.value = ''; renderPriorityList();
+}
+function movePriority(idx, dir) {
+  const next = idx + dir;
+  if (next < 0 || next >= data.priorities.length) return;
+  [data.priorities[idx], data.priorities[next]] = [data.priorities[next], data.priorities[idx]];
+  save(); renderPriorityList();
+}
+function removePriority(idx) {
+  const name = itemName(data.priorities[idx]);
+  if (data.priorities.length === 1) { alert('At least one priority must remain.'); return; }
+  if (data.issues.some(i => i.priority === name)) { alert('Priority is used by issues.'); return; }
+  if (!confirm('Remove priority "' + name + '"?')) return;
+  const removedDefault = !!data.priorities[idx].isDefault;
+  data.priorities.splice(idx, 1);
+  if (removedDefault && data.priorities.length) {
+    const replacement = data.priorities[0];
+    data.priorities.forEach(p => { p.isDefault = p === replacement; });
+  }
+  save(); renderPriorityList();
 }
 function renderCompanyList() {
   const el = document.getElementById('companyList'); if (!el) return;
@@ -1377,11 +1612,19 @@ function renderTagList() {
         data-old="${esc(name)}" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
         onblur="commitTagName(${idx}, this)">
       <div class="catalog-actions">
+        <label class="catalog-option" title="Use as the Important tag">
+          <input type="radio" name="importantTag" aria-label="Important tag" ${importantTagName() === name ? 'checked' : ''} onchange="setImportantTag(${idx})"> Important
+        </label>
         <button class="btn danger icon" title="Remove ${esc(name)}" aria-label="Remove ${esc(name)}" ${used ? 'disabled style="opacity:.45"' : ''} onclick="removeTag(${idx})">×</button>
       </div>
     </div>`;
   }).join('');
   updateCatalogCounts(); filterCatalogRows();
+}
+function setImportantTag(idx) {
+  if (!data.tagsCatalog[idx]) return;
+  data.tagsCatalog.forEach((tag, tagIdx) => { tag.isImportant = tagIdx === idx; });
+  save(); renderTagList();
 }
 function setTagColor(idx, color) {
   if (!data.tagsCatalog[idx]) return;
@@ -1401,7 +1644,10 @@ function removeTag(idx) {
   const used = data.issues.some(i => (i.tags || []).includes(name)) || data.prs.some(p => (p.tags || []).includes(name));
   if (used) { alert('Tag is in use.'); return }
   if (!confirm('Remove "' + name + '"?')) return;
-  data.tagsCatalog.splice(idx, 1); save(); renderTagList();
+  const removedImportant = !!data.tagsCatalog[idx].isImportant;
+  data.tagsCatalog.splice(idx, 1);
+  if (removedImportant && data.tagsCatalog.length) data.tagsCatalog[0].isImportant = true;
+  save(); renderTagList();
 }
 function addCatalogItem(listKey) {
   const inputId = listKey === 'companies' ? 'newCompanyName' : 'newTagName';
@@ -1460,7 +1706,7 @@ function collectTagsFromPicker() {
 function issuePrStats(issueId) {
   const list = data.prs.filter(p => p.issueId === issueId);
   const by = {};
-  list.forEach(p => { const s = p.status || 'TODO'; by[s] = (by[s] || 0) + 1; });
+  list.forEach(p => { const s = p.status || defaultStatusName(); by[s] = (by[s] || 0) + 1; });
   return { total: list.length, by };
 }
 function progressHtml(issueId) {
@@ -1470,7 +1716,7 @@ function progressHtml(issueId) {
   const keys = [...order.filter(s => st.by[s]), ...Object.keys(st.by).filter(s => !order.includes(s))];
   return `<div class="progress-bar">${keys.map(s => {
     const n = st.by[s];
-    const cls = /todo/i.test(s) ? 'has-todo' : (/(pr.?d|done|complete)/i.test(s) ? 'has-done' : '');
+    const cls = statusObj(s)?.isNeedsAction ? 'has-todo' : (statusObj(s)?.isTerminal ? 'has-done' : '');
     return `<span class="progress-pill ${cls}">${esc(s)} ${n}</span>`;
   }).join('')}<span class="progress-pill">${st.total} total</span></div>`;
 }
@@ -1536,7 +1782,7 @@ function onInlineIssuePriority(el) {
   event.stopPropagation();
   const id = el.dataset.issue;
   const i = issue(id); if (!i) return;
-  openInlineMenu(el, PRIORITIES, i.priority, (val) => {
+  openInlineMenu(el, priorityNames(), i.priority, (val) => {
     i.priority = val; i.updatedAt = nowIso(); save(); renderIssues();
   }, 'Priority');
 }
@@ -1591,7 +1837,7 @@ function openBulkAddDestModal(issueId) {
   <div class="modal-body">
     <div class="subtitle" style="margin-bottom:10px">${esc(i.jira || '')} · ${esc(i.description || '')} · ${esc(i.version || '')}</div>
     <div class="form-group"><label>Initial status</label>
-      ${ssHtml({ id: 'bulkStatus', name: 'bulkStatus', options: statuses(), value: 'TODO' })}
+      ${ssHtml({ id: 'bulkStatus', name: 'bulkStatus', options: statuses(), value: defaultStatusName() })}
     </div>
     <div class="form-group">
       <label>Search destinations</label>
@@ -1673,7 +1919,7 @@ function bulkSelectGroup(masterId) {
 function commitBulkAddDest(issueId) {
   const ids = [...document.querySelectorAll('#modal .bulk-dest:checked')].map(c => c.value);
   if (!ids.length) { alert('Select at least one destination.'); return; }
-  const status = (document.getElementById('bulkStatus')?.value) || 'TODO';
+  const status = (document.getElementById('bulkStatus')?.value) || defaultStatusName();
   const ts = nowIso();
   const used = new Set(data.prs.filter(p => p.issueId === issueId).map(p => p.destinationId));
   let n = 0;
@@ -1732,12 +1978,12 @@ function toggleAttentionView() {
 }
 function issueNeedsAttention(issueObj) {
   const issuePrs = data.prs.filter(p => p.issueId === issueObj.id);
-  if (!issuePrs.length) return true;
-  const terminalStatuses = new Set(["pr'd", 'rejected', 'not required']);
+  if (!issuePrs.length) return settings.needsAttentionWithoutPr !== false;
+  const terminalStatuses = new Set((data.statuses || []).filter(s => s.isTerminal).map(s => itemName(s).toLowerCase()));
   const openPrs = issuePrs.filter(p => !terminalStatuses.has(String(p.status || '').toLowerCase()));
   if (!openPrs.length) return false;
-  if (['critical', 'high'].includes(String(issueObj.priority || '').toLowerCase())) return true;
-  const staleAfterMs = 14 * 24 * 60 * 60 * 1000;
+  if (priorityObj(issueObj.priority)?.isUrgent) return true;
+  const staleAfterMs = Math.max(1, Number(settings.attentionAgeDays) || 14) * 24 * 60 * 60 * 1000;
   return openPrs.some(p => {
     const updatedAt = Date.parse(p.updatedAt || p.createdAt || '');
     return Number.isFinite(updatedAt) && Date.now() - updatedAt >= staleAfterMs;
@@ -1907,8 +2153,9 @@ function onIssueDrop(e, targetId) {
 function renderIssues() {
   renderStats();
   ssMountFilter('issueVersionFilter', 'issueVersion', versionNames(), 'All versions', () => renderIssues());
-  ssMountFilter('issuePriorityFilter', 'issuePriority', PRIORITIES, 'All priority', () => renderIssues());
-  ssMountFilter('issueImportantFilter', 'issueImportant', [{ value: 'important', label: 'Important only' }], 'All importance', () => renderIssues());
+  const importantTag = importantTagName();
+  ssMountFilter('issuePriorityFilter', 'issuePriority', priorityNames(), 'All priority', () => renderIssues());
+  ssMountFilter('issueImportantFilter', 'issueImportant', importantTag ? [{ value: importantTag, label: `${importantTag} only` }] : [], 'All importance', () => renderIssues());
   ssMountFilter('issuePrStatusFilter', 'issuePrStatus', statuses(), 'All PR status', () => renderIssues());
   ssMountFilter('issueCompanyFilter', 'issueCompany', companyNames(false), 'All companies', () => renderIssues());
   ssMountFilter('issueReportedVerFilter', 'issueReportedVer', versionNames(), 'All reported ver.', () => renderIssues());
@@ -1916,7 +2163,8 @@ function renderIssues() {
   const v = document.getElementById('issueVersion').value;
   const pv = document.getElementById('issuePriority').value;
   const ps = document.getElementById('issuePrStatus').value;
-  const imp = document.getElementById('issueImportant').value;
+  const rawImportant = document.getElementById('issueImportant').value;
+  const imp = rawImportant === 'important' ? importantTag : rawImportant;
   const co = document.getElementById('issueCompany')?.value || '';
   const rv = document.getElementById('issueReportedVer')?.value || '';
   const attention = document.getElementById('issueAttention')?.value === '1';
@@ -1925,7 +2173,7 @@ function renderIssues() {
     return (!q || [i.jira, i.description, i.notes, i.reportedBy || '', i.reportedVersion || ''].join(' ').toLowerCase().includes(q))
       && (!v || i.version === v) && (!pv || i.priority === pv)
       && (!ps || prs.some(p => p.status === ps))
-      && (!imp || (i.tags || []).map(t => t.toLowerCase()).includes('important'))
+      && (!imp || (i.tags || []).includes(imp))
       && (!co || i.reportedBy === co)
       && (!rv || i.reportedVersion === rv)
       && (!attention || issueNeedsAttention(i));
@@ -1969,7 +2217,7 @@ function renderIssues() {
           <div dir="auto" class="card-title copy-field copy-field--description"><span class="copy-value">${esc(i.description || 'Untitled')}</span>${copyButtonHtml(i.description, 'issue description')}</div>
           <div class="meta">
             <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssueVersion(this)" title="Click to change version">${coloredChip(i.version, itemColor(versionObj(i.version)))}</span>
-            <span class="inline-hit chip priority-${(i.priority || 'normal').toLowerCase()}" data-issue="${esc(i.id)}" onclick="onInlineIssuePriority(this)" title="Click to change priority">${esc(i.priority)}</span>
+            <span class="inline-hit" data-issue="${esc(i.id)}" onclick="onInlineIssuePriority(this)" title="Click to change priority">${coloredChip(i.priority, itemColor(priorityObj(i.priority)), `priority-${String(i.priority || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)}</span>
           </div>
           ${progressHtml(i.id)}
         </div>
@@ -2014,8 +2262,8 @@ function renderIssues() {
 }
 
 function openIssueModal(id) {
-  const defaultVer = versionNames().includes('V14+') ? 'V14+' : (versionNames()[0] || '');
-  const i = id ? issue(id) : { jira: '', link: '', description: '', version: defaultVer, priority: 'Normal', reportedBy: '', reportedVersion: '', tags: [], notes: '' };
+  const defaultVer = defaultVersionName();
+  const i = id ? issue(id) : { jira: '', link: '', description: '', version: defaultVer, priority: defaultPriorityName(), reportedBy: '', reportedVersion: '', tags: [], notes: '' };
   openModal(`<div class="modal-head"><h2>${id ? 'Edit issue' : 'New issue'}</h2><button class="kebab" onclick="closeModal()">×</button></div>
   <form class="modal-body" onsubmit="saveIssue(event,'${id || ''}')">
     <div class="grid2">
@@ -2036,7 +2284,7 @@ function openIssueModal(id) {
         ${ssHtml({ id: 'issVersion', name: 'version', options: versionNames(), value: i.version })}
       </div>
       <div class="form-group"><label>Priority</label>
-        ${ssHtml({ id: 'issPriority', name: 'priority', options: PRIORITIES, value: i.priority || 'Normal' })}
+        ${ssHtml({ id: 'issPriority', name: 'priority', options: priorityNames(), value: i.priority || defaultPriorityName() })}
       </div>
     </div>
     <div class="grid2">
@@ -2104,7 +2352,7 @@ function destSearchBlob(d) {
 }
 
 function openPrModal(prId, issueId) {
-  const p = prId ? data.prs.find(x => x.id === prId) : { issueId: issueId || data.issues[0]?.id || '', destinationId: '', status: 'TODO', prUrl: '', tags: [], notes: '' };
+  const p = prId ? data.prs.find(x => x.id === prId) : { issueId: issueId || data.issues[0]?.id || '', destinationId: '', status: defaultStatusName(), prUrl: '', tags: [], notes: '' };
   const available = availableDestinationsForIssue(p.issueId, prId || '');
   const selected = dest(p.destinationId);
   const display = selected ? destLabel(selected) : (available.length ? 'Select destination…' : 'No compatible destinations');
@@ -2126,10 +2374,10 @@ function openPrModal(prId, issueId) {
           <div class="ss-list" id="prDestList"></div>
         </div>
       </div>
-      <div class="small" style="margin-top:4px">Only masters/temps on this issue’s version line or later (V14+ → V14, V15, … — not V11/V12).</div>
+      <div class="small" style="margin-top:4px">${esc(destinationCompatibilityDescription())}</div>
     </div>
     <div class="form-group"><label>Status</label>
-      ${ssHtml({ id: 'prStatusSS', name: 'status', options: statuses(), value: p.status || 'TODO' })}
+      ${ssHtml({ id: 'prStatusSS', name: 'status', options: statuses(), value: p.status || defaultStatusName() })}
     </div>
     <div class="form-group"><label>Tags</label>${tagPickerHtml(p.tags || [])}</div>
     <div class="form-group"><label>Submitted PR link (optional)</label>
@@ -2287,12 +2535,17 @@ function renderDestinations() {
   ssMountFilter('destFromFilterWrap', 'destFromFilter', versionNames(), 'All from-versions', () => renderDestinations());
   ssMountFilter('destActiveFilterWrap', 'destActiveFilter', [{ value: '1', label: 'Active' }, { value: '0', label: 'Inactive' }], 'All', () => renderDestinations());
   const q = (document.getElementById('destSearch')?.value || '').toLowerCase();
+  const searchTerms = q.replace(/[\W_]+/g, ' ').trim().split(/\s+/).filter(Boolean);
   const cf = document.getElementById('destCompanyFilter')?.value || '';
   const ff = document.getElementById('destFromFilter')?.value || '';
   const af = document.getElementById('destActiveFilter')?.value || '';
 
   const matchActive = (d) => af === '' || (af === '1' ? d.active : !d.active);
-  const matchQ = (d) => !q || [d.name, d.branch, d.company, d.fromVersion].join(' ').toLowerCase().includes(q);
+  const matchQ = (d) => {
+    if (!searchTerms.length) return true;
+    const text = [d.name, d.branch, d.company, d.fromVersion].join(' ').toLowerCase().replace(/[\W_]+/g, ' ');
+    return searchTerms.every(term => text.includes(term));
+  };
 
   let masterList = masters().filter(m => {
     if (!matchActive(m) && !tempsOf(m.id).some(matchActive)) return false;
@@ -2393,7 +2646,7 @@ function renderDestinations() {
 }
 
 function openMasterModal(id) {
-  const defaultFrom = versionNames().includes('V14+') ? 'V14+' : (versionNames()[0] || '');
+  const defaultFrom = defaultVersionName();
   const d = id ? dest(id) : { name: '', branch: '', fromVersion: defaultFrom, active: true };
   openModal(`<div class="modal-head"><h2>${id ? 'Edit master' : 'New master'}</h2><button class="kebab" onclick="closeModal()">×</button></div>
   <form class="modal-body" onsubmit="saveMaster(event,'${id || ''}')">
@@ -2406,7 +2659,7 @@ function openMasterModal(id) {
     </div>
     <div class="form-group"><label>Supports from version</label>
       ${ssHtml({ id: 'masterFromVer', name: 'fromVersion', options: versionNames(), value: d.fromVersion || versionNames()[0] || '' })}
-      <div class="small" style="margin-top:4px">Version line of this master. A V14+ issue sees V14+ and later masters, not V11+/V12+.</div>
+      <div class="small" style="margin-top:4px">${esc(destinationCompatibilityDescription())}</div>
     </div>
     <div class="form-group"><label>Azure path override (optional)</label>
       <input dir="auto" class="field" name="azurePath" value="${esc(d.azurePath || '')}" placeholder="Leave empty to use Settings template">
@@ -2548,7 +2801,7 @@ function reevaluateTempBranchNames() {
     const expected = expectedTempBranch(parent, d.company);
     if (!expected) { skipped++; return; }
     const branchSame = (d.branch || '') === expected;
-    const nameWasAuto = !d.name || d.name === d.branch || /^temp_/i.test(d.name || '');
+    const nameWasAuto = !d.name || d.name === d.branch || d.name === expected;
     if (branchSame && !(nameWasAuto && d.name !== expected)) { return; }
     d.branch = expected;
     if (nameWasAuto) d.name = expected;
@@ -2949,6 +3202,7 @@ async function cloudPull(opts) {
       versions: x.versions || data.versions,
       companies: x.companies || data.companies,
       statuses: x.statuses || data.statuses,
+      priorities: x.priorities || data.priorities,
       tagsCatalog: x.tagsCatalog || data.tagsCatalog
     };
     data = migrateData(base);
@@ -3002,7 +3256,12 @@ function exportableSettings() {
     azureRepoUrl: settings.azureRepoUrl || '',
     azureMasterPath: settings.azureMasterPath || '',
     azureTempPath: settings.azureTempPath || '',
+    tempBranchTemplate: settings.tempBranchTemplate || 'Temp_{ver}_{company}',
     azureSimpleBranches: settings.azureSimpleBranches || '',
+    attentionAgeDays: settings.attentionAgeDays || 14,
+    needsAttentionWithoutPr: settings.needsAttentionWithoutPr !== false,
+    destinationCompatibility: settings.destinationCompatibility === 'exact' ? 'exact' : 'from',
+    backupFilename: backupFilename(),
     savedViews: settings.savedViews || [],
     darkMode: !!settings.darkMode,
     autoBackup: !!settings.autoBackup,
@@ -3016,13 +3275,16 @@ function exportableSettings() {
 }
 function applyExportedSettings(s) {
   if (!s || typeof s !== 'object') return;
-  ['jiraBaseUrl', 'azureRepoUrl', 'azureMasterPath', 'azureTempPath', 'azureSimpleBranches'].forEach(k => {
+  ['jiraBaseUrl', 'azureRepoUrl', 'azureMasterPath', 'azureTempPath', 'tempBranchTemplate', 'azureSimpleBranches', 'backupFilename'].forEach(k => {
     if (s[k] != null) settings[k] = s[k];
   });
   if (Array.isArray(s.savedViews)) settings.savedViews = s.savedViews;
   if (s.darkMode != null) settings.darkMode = !!s.darkMode;
   if (s.autoBackup != null) settings.autoBackup = !!s.autoBackup;
   if (s.backupMinutes != null) settings.backupMinutes = Number(s.backupMinutes) || 60;
+  if (s.attentionAgeDays != null) settings.attentionAgeDays = Math.max(1, Math.floor(Number(s.attentionAgeDays) || 14));
+  if (s.needsAttentionWithoutPr != null) settings.needsAttentionWithoutPr = !!s.needsAttentionWithoutPr;
+  if (s.destinationCompatibility != null) settings.destinationCompatibility = s.destinationCompatibility === 'exact' ? 'exact' : 'from';
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   applyTheme();
 }
@@ -3039,6 +3301,7 @@ function buildSectionPayload(section) {
   else if (section === 'lists') {
     slice.companies = data.companies;
     slice.statuses = data.statuses;
+    slice.priorities = data.priorities;
     slice.tagsCatalog = data.tagsCatalog;
   }
   else if (section === 'settings') { return { version: 6, section: 'settings', exportedAt, settings: exportableSettings() }; }
@@ -3135,18 +3398,7 @@ function matchDestByBranch(branch) {
   if (d) return d;
   d = list.find(x => destLabel(x).toLowerCase() === n);
   if (d) return d;
-  if (n === 'developer') {
-    d = list.find(x => (x.branch || '').toLowerCase() === 'developer' || (x.name || '').toLowerCase() === 'developer');
-    if (d) return d;
-  }
-  if (n === 'parsian') {
-    d = list.find(x => (x.company || '').toLowerCase() === 'parsian' && x.kind === 'temp');
-    if (d) return d;
-    d = list.find(x => (x.branch || '').toLowerCase().includes('parsian'));
-  }
-  // case-insensitive temp_ vs Temp_
-  d = list.find(x => (x.branch || '').toLowerCase() === n || (x.name || '').toLowerCase() === n);
-  return d || null;
+  return list.find(x => x.kind === 'temp' && String(x.company || '').toLowerCase() === n) || null;
 }
 function linkPrDestinationBranches(prList) {
   let linked = 0, unmatched = 0;
@@ -3187,7 +3439,7 @@ function normalizeImportPayload(raw) {
   if (Array.isArray(raw.versions) && !raw.issues) {
     return { section: 'versions', data: { versions: raw.versions }, settings: null, raw };
   }
-  if (Array.isArray(raw.companies) || Array.isArray(raw.statuses) || Array.isArray(raw.tagsCatalog)) {
+  if (Array.isArray(raw.companies) || Array.isArray(raw.statuses) || Array.isArray(raw.priorities) || Array.isArray(raw.tagsCatalog)) {
     return { section: 'lists', data: raw, settings: null, raw };
   }
   throw new Error('Unrecognized backup format (need issues/destinations/prs or a PR Tracker export).');
@@ -3220,6 +3472,7 @@ function importSectionFile(e) {
           versions: Array.isArray(x.versions) && x.versions.length ? x.versions : (data.versions || []),
           companies: Array.isArray(x.companies) ? x.companies : (data.companies || []),
           statuses: Array.isArray(x.statuses) ? x.statuses : (data.statuses || []),
+          priorities: Array.isArray(x.priorities) ? x.priorities : (data.priorities || []),
           tagsCatalog: Array.isArray(x.tagsCatalog) ? x.tagsCatalog : (data.tagsCatalog || [])
         };
         if (!base.issues.length && !base.prs.length && !base.destinations.length) {
@@ -3230,6 +3483,7 @@ function importSectionFile(e) {
         if ((!base.versions || !base.versions.length) && (data.versions || []).length) base.versions = data.versions;
         if ((!base.companies || !base.companies.length) && (data.companies || []).length) base.companies = data.companies;
         if ((!base.statuses || !base.statuses.length) && (data.statuses || []).length) base.statuses = data.statuses;
+        if ((!base.priorities || !base.priorities.length) && (data.priorities || []).length) base.priorities = data.priorities;
         if ((!base.tagsCatalog || !base.tagsCatalog.length) && (data.tagsCatalog || []).length) base.tagsCatalog = data.tagsCatalog;
         data = migrateData(base);
         const link = linkPrDestinationBranches(data.prs);
@@ -3267,6 +3521,7 @@ function importSectionFile(e) {
       } else if (section === 'lists') {
         if (incoming.companies) data.companies = mergeCompanies(data.companies, incoming.companies);
         if (incoming.statuses) data.statuses = mergeNamedList(data.statuses, incoming.statuses);
+        if (incoming.priorities) data.priorities = mergeNamedList(data.priorities, incoming.priorities);
         if (incoming.tagsCatalog) data.tagsCatalog = mergeNamedList(data.tagsCatalog, incoming.tagsCatalog);
       } else if (section === 'settings') {
         applyExportedSettings(norm.settings || incoming);

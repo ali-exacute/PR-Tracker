@@ -1065,6 +1065,21 @@ textarea.field {
 	gap: 6px;
 	flex: 0 0 auto;
 }
+.catalog-option {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 12px;
+	white-space: nowrap;
+}
+.catalog-option input {
+	margin: 0;
+}
+.catalog-row--status .row-controls,
+.version-row .row-controls {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
 .order-btns {
 	display: inline-flex;
 	align-items: center;
