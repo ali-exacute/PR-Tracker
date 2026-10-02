@@ -74,6 +74,14 @@ function readStoredJSON(key, fallback = null) {
 function uniqSorted(arr) {
   return [...new Set((arr || []).map(s => String(s || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
+function searchTerms(query) {
+  return String(query || '').toLowerCase().replace(/[\W_]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+function matchesSearchTerms(value, terms) {
+  if (!terms || !terms.length) return true;
+  const text = String(value || '').toLowerCase().replace(/[\W_]+/g, ' ');
+  return terms.every(term => text.includes(term));
+}
 function itemName(x) { return x == null ? '' : (typeof x === 'string' ? x : String(x.name || '')); }
 function itemColor(x) { return (x && typeof x === 'object' && x.color) ? x.color : ''; }
 function toNamedItems(arr) {
@@ -1144,14 +1152,14 @@ function ssRenderList(id) {
   const list = document.getElementById(id + '-list');
   const reg = window._ssRegistry[id];
   if (!list || !reg) return;
-  const q = (document.getElementById(id + '-search')?.value || '').toLowerCase().trim();
+  const terms = searchTerms(document.getElementById(id + '-search')?.value || '');
   const cur = document.getElementById(id)?.value ?? '';
   let opts = reg.options;
-  if (q) opts = opts.filter(o => o.search.includes(q) || o.label.toLowerCase().includes(q));
+  if (terms.length) opts = opts.filter(o => matchesSearchTerms(`${o.search} ${o.label}`, terms));
   let html = '';
   // Use data-* attributes so values with quotes/apostrophes (e.g. PR'd) stay clickable
   if (reg.hasEmpty) {
-    if (!q || String(reg.emptyLabel || '').toLowerCase().includes(q)) {
+    if (!terms.length || matchesSearchTerms(reg.emptyLabel, terms)) {
       html += `<div class="ss-item ${cur === reg.emptyValue ? 'active' : ''}" data-ss-id="${esc(id)}" data-ss-value="${esc(String(reg.emptyValue))}" onclick="ssPickFromEl(this)"><span class="ss-main">${esc(reg.emptyLabel || '—')}</span></div>`;
     }
   }
@@ -1841,6 +1849,7 @@ function openBulkAddDestModal(issueId) {
     <div class="form-group"><label>Initial status</label>
       ${ssHtml({ id: 'bulkStatus', name: 'bulkStatus', options: statuses(), value: defaultStatusName() })}
     </div>
+    <div class="form-group"><label>Initial tags</label>${tagPickerHtml(i.tags || [])}</div>
     <div class="form-group">
       <label>Search destinations</label>
       <input dir="auto" id="bulkDestSearch" class="field" placeholder="Search branch, company, master…" oninput="filterBulkDestList()">
@@ -1864,12 +1873,9 @@ function openBulkAddDestModal(issueId) {
 function bulkRowSearchBlob(d) {
   return [destLabel(d), d.branch, d.name, d.company, d.kind, d.fromVersion].filter(Boolean).join(' ').toLowerCase();
 }
-function bulkSearchTerms(query) {
-  return String(query || '').toLowerCase().replace(/[\W_]+/g, ' ').trim().split(/\s+/).filter(Boolean);
-}
 function renderBulkDestList(groups, q) {
-  const terms = bulkSearchTerms(q);
-  const match = d => terms.every(term => bulkRowSearchBlob(d).replace(/[\W_]+/g, ' ').includes(term));
+  const terms = searchTerms(q);
+  const match = d => matchesSearchTerms(bulkRowSearchBlob(d), terms);
   const selected = window._bulkSelected || new Set();
   const expanded = window._bulkExpanded || new Set();
   let html = '', n = 0;
@@ -1955,8 +1961,8 @@ function bulkSelectGroup(groupId) {
     : groups.find(g => g.master && g.master.id === groupId);
   if (!group) return;
   const selected = window._bulkSelected || (window._bulkSelected = new Set());
-  const terms = bulkSearchTerms(document.getElementById('bulkDestSearch')?.value || '');
-  const match = d => terms.every(term => bulkRowSearchBlob(d).replace(/[\W_]+/g, ' ').includes(term));
+  const terms = searchTerms(document.getElementById('bulkDestSearch')?.value || '');
+  const match = d => matchesSearchTerms(bulkRowSearchBlob(d), terms);
   if (group.master && match(group.master)) selected.add(group.master.id);
   (group.temps || []).filter(match).forEach(temp => selected.add(temp.id));
   filterBulkDestList();
@@ -1965,12 +1971,13 @@ function commitBulkAddDest(issueId) {
   const ids = [...(window._bulkSelected || [])];
   if (!ids.length) { alert('Select at least one destination.'); return; }
   const status = (document.getElementById('bulkStatus')?.value) || defaultStatusName();
+  const tags = collectTagsFromPicker(); ensureTagsInCatalog(tags);
   const ts = nowIso();
   const used = new Set(data.prs.filter(p => p.issueId === issueId).map(p => p.destinationId));
   let n = 0;
   ids.forEach(did => {
     if (used.has(did)) return;
-    data.prs.push({ id: uid('p'), issueId, destinationId: did, status, prUrl: '', tags: [], notes: '', createdAt: ts, updatedAt: ts });
+    data.prs.push({ id: uid('p'), issueId, destinationId: did, status, prUrl: '', tags, notes: '', createdAt: ts, updatedAt: ts });
     used.add(did); n++;
   });
   const iss = issue(issueId); if (iss) iss.updatedAt = ts;
@@ -2096,14 +2103,14 @@ function deleteSavedView(id) {
 function filterIssuePrs(issueId) {
   const root = document.querySelector(`[data-issue-prs="${CSS.escape(issueId)}"]`);
   if (!root) return;
-  const q = (root.querySelector('.prs-search')?.value || '').toLowerCase().trim();
+  const terms = searchTerms(root.querySelector('.prs-search')?.value || '');
   const st = (root.querySelector('.prs-status-filter')?.value || '').trim();
   const rows = [...root.querySelectorAll('.pr-row')];
   let visible = 0;
   rows.forEach(row => {
     const hay = row.getAttribute('data-search') || '';
     const rowSt = row.getAttribute('data-status') || '';
-    const okQ = !q || hay.includes(q);
+    const okQ = matchesSearchTerms(hay, terms);
     const okS = !st || rowSt === st;
     const show = okQ && okS;
     row.classList.toggle('pr-hidden', !show);
@@ -2398,6 +2405,7 @@ function destSearchBlob(d) {
 
 function openPrModal(prId, issueId) {
   const p = prId ? data.prs.find(x => x.id === prId) : { issueId: issueId || data.issues[0]?.id || '', destinationId: '', status: defaultStatusName(), prUrl: '', tags: [], notes: '' };
+  const initialTags = prId ? (p.tags || []) : (issue(p.issueId)?.tags || []);
   const available = availableDestinationsForIssue(p.issueId, prId || '');
   const selected = dest(p.destinationId);
   const display = selected ? destLabel(selected) : (available.length ? 'Select destination…' : 'No compatible destinations');
@@ -2424,7 +2432,7 @@ function openPrModal(prId, issueId) {
     <div class="form-group"><label>Status</label>
       ${ssHtml({ id: 'prStatusSS', name: 'status', options: statuses(), value: p.status || defaultStatusName() })}
     </div>
-    <div class="form-group"><label>Tags</label>${tagPickerHtml(p.tags || [])}</div>
+    <div class="form-group"><label>Tags</label>${tagPickerHtml(initialTags)}</div>
     <div class="form-group"><label>Submitted PR link (optional)</label>
       <input dir="auto" class="field" name="prUrl" value="${esc(p.prUrl || '')}" placeholder="http://eit-tfs:8080/.../pullrequest/123">
       <div class="small" style="margin-top:4px">Link to the PR you opened in Azure/TFS for this destination.</div>
@@ -2442,9 +2450,12 @@ function openPrModal(prId, issueId) {
   document.addEventListener('click', closeDestSSOnOutside);
 }
 function onPrIssueChange() {
+  const issueId = document.getElementById('prIssueSelect')?.value;
   document.getElementById('prDestSelect').value = '';
   document.getElementById('prDestDisplayVal').textContent = 'Select destination…';
   const search = document.getElementById('prDestSearch'); if (search) search.value = '';
+  const issueTags = new Set(issue(issueId)?.tags || []);
+  document.querySelectorAll('#tagPicker .tag-pick').forEach(tag => tag.classList.toggle('on', issueTags.has(tag.dataset.tag)));
   renderDestSSList();
 }
 function toggleDestSS() {
@@ -2467,19 +2478,19 @@ function renderDestSSList() {
   const list = document.getElementById('prDestList');
   if (!list) return;
   const issueId = document.getElementById('prIssueSelect')?.value;
-  const q = (document.getElementById('prDestSearch')?.value || '').toLowerCase().trim();
+  const terms = searchTerms(document.getElementById('prDestSearch')?.value || '');
   const selectedId = document.getElementById('prDestSelect')?.value;
   let available = availableDestinationsForIssue(issueId, window._prModalPrId || '');
   if (selectedId && !available.some(d => d.id === selectedId)) {
     const cur = dest(selectedId); if (cur) available = available.concat([cur]);
   }
-  if (q) {
-    const matched = available.filter(d => destSearchBlob(d).includes(q));
+  if (terms.length) {
+    const matched = available.filter(d => matchesSearchTerms(destSearchBlob(d), terms));
     const ids = new Set(matched.map(d => d.id));
     matched.forEach(d => {
       if (d.kind === 'temp' && d.parentId) ids.add(d.parentId);
     });
-    available.filter(d => d.kind === 'master' && destSearchBlob(d).includes(q)).forEach(m => {
+    available.filter(d => d.kind === 'master' && matchesSearchTerms(destSearchBlob(d), terms)).forEach(m => {
       available.filter(t => t.kind === 'temp' && t.parentId === m.id).forEach(t => ids.add(t.id));
     });
     available = available.filter(d => ids.has(d.id));
@@ -2546,13 +2557,13 @@ function renderPRs() {
   ssMountFilter('prStatusFilter', 'prStatus', statuses(), 'All statuses', () => renderPRs());
   ssMountFilter('prCompanyFilter', 'prCompany', companies, 'All companies', () => renderPRs());
   ssMountFilter('prVersionFilter', 'prVersion', versionNames(), 'All versions', () => renderPRs());
-  const q = document.getElementById('prSearch').value.toLowerCase();
+  const terms = searchTerms(document.getElementById('prSearch').value);
   const s = document.getElementById('prStatus').value;
   const c = document.getElementById('prCompany').value;
   const v = document.getElementById('prVersion').value;
   const arr = data.prs.filter(p => {
     const i = issue(p.issueId), d = dest(p.destinationId); if (!i || !d) return false;
-    return (!q || [i.jira, i.description, d.name, d.branch, d.company, p.prUrl || '', (p.tags || []).join(' ')].join(' ').toLowerCase().includes(q))
+    return matchesSearchTerms([i.jira, i.description, d.name, d.branch, d.company, p.prUrl || '', (p.tags || []).join(' ')].join(' '), terms)
       && (!s || p.status === s) && (!c || d.company === c) && (!v || i.version === v);
   });
   const el = document.getElementById('prList');
@@ -2579,18 +2590,14 @@ function renderDestinations() {
   ssMountFilter('destCompanyFilterWrap', 'destCompanyFilter', companyNames(false), 'All companies', () => renderDestinations());
   ssMountFilter('destFromFilterWrap', 'destFromFilter', versionNames(), 'All from-versions', () => renderDestinations());
   ssMountFilter('destActiveFilterWrap', 'destActiveFilter', [{ value: '1', label: 'Active' }, { value: '0', label: 'Inactive' }], 'All', () => renderDestinations());
-  const q = (document.getElementById('destSearch')?.value || '').toLowerCase();
-  const searchTerms = q.replace(/[\W_]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  const q = document.getElementById('destSearch')?.value || '';
+  const terms = searchTerms(q);
   const cf = document.getElementById('destCompanyFilter')?.value || '';
   const ff = document.getElementById('destFromFilter')?.value || '';
   const af = document.getElementById('destActiveFilter')?.value || '';
 
   const matchActive = (d) => af === '' || (af === '1' ? d.active : !d.active);
-  const matchQ = (d) => {
-    if (!searchTerms.length) return true;
-    const text = [d.name, d.branch, d.company, d.fromVersion].join(' ').toLowerCase().replace(/[\W_]+/g, ' ');
-    return searchTerms.every(term => text.includes(term));
-  };
+  const matchQ = d => matchesSearchTerms([d.name, d.branch, d.company, d.fromVersion].join(' '), terms);
 
   let masterList = masters().filter(m => {
     if (!matchActive(m) && !tempsOf(m.id).some(matchActive)) return false;
@@ -2601,7 +2608,7 @@ function renderDestinations() {
       if (!temps.length && !(matchQ(m) && !cf)) return false;
       // still show master shell if temps match
     }
-    if (q) {
+    if (terms.length) {
       const self = matchQ(m);
       const child = tempsOf(m.id).some(t => matchQ(t) && matchActive(t) && (!cf || t.company === cf));
       if (!self && !child) return false;
